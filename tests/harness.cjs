@@ -5,11 +5,11 @@ const scriptPath = path.resolve(__dirname, '..', 'linuxdo-keyword-highlighter.us
 const fixture = fs.readFileSync(path.join(__dirname, 'fixture.html'), 'utf8');
 const storageKey = 'linuxdo-keyword-highlighter-v1';
 const initial = {
-  version: 1,
+  version: 2,
   rules: [
-    { id: 'openai', text: 'OpenAI', color: '#18f0ff', enabled: true, scopes: ['list', 'topic', 'body'] },
-    { id: 'ai', text: 'AI', color: '#edff00', enabled: true, scopes: ['list', 'topic', 'body'] },
-    { id: 'phrase', text: 'OpenAI API', color: '#ff5cc9', enabled: true, scopes: ['list', 'topic', 'body'] },
+    { id: 'openai', name: '', keywords: ['OpenAI'], color: '#18f0ff', enabled: true, scopes: ['list', 'topic', 'body'] },
+    { id: 'ai', name: '', keywords: ['AI'], color: '#edff00', enabled: true, scopes: ['list', 'topic', 'body'] },
+    { id: 'phrase', name: '', keywords: ['OpenAI API'], color: '#ff5cc9', enabled: true, scopes: ['list', 'topic', 'body'] },
   ],
   ui: { mode: 'right', position: { x: 0.94, y: 0.72 } },
 };
@@ -36,11 +36,16 @@ async function installAdapter(page, seed) {
       sessionStorage.setItem(key, JSON.stringify(next));
       for (const item of window.__testListeners) item.callback(key, previous, next, true);
     };
-    window.__testSnapshot = () => [...CSS.highlights].filter(([name]) => name.startsWith('ldkh-')).flatMap(([name, highlight]) => [...highlight].map(range => ({
-      ruleId: name.slice(5), text: range.toString(), connected: range.startContainer.isConnected && range.endContainer.isConnected,
-      root: range.startContainer.parentElement.closest('a.title,a.fancy-title,.cooked')?.id,
-      block: range.startContainer.parentElement.closest('p,pre')?.id,
-    })));
+    window.__testSnapshot = () => [...document.querySelectorAll('mark[data-ldkh-rule]')].map(mark => ({
+      ruleId: mark.dataset.ldkhRule, text: mark.textContent, connected: mark.isConnected,
+      root: mark.closest('a.title,a.fancy-title,.cooked')?.id,
+      block: mark.closest('p,pre')?.id,
+    }));
+    window.__testOriginalMarkup = element => {
+      const clone = element.cloneNode(true);
+      for (const owned of clone.querySelectorAll('ldkh-text[data-ldkh-owned="text"],mark[data-ldkh-rule]')) owned.replaceWith(...owned.childNodes);
+      return clone.innerHTML;
+    };
   }, { seedValue: seed, key: storageKey });
 }
 

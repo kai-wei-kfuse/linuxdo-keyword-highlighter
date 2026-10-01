@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Linux.do 荧光关键词高亮
 // @namespace    linuxdo-keyword-highlighter
-// @version      1.0.0
-// @description  分区关键词高亮、荧光背景与阴影、短词覆盖长词、可拖动或贴边的设置入口。
+// @version      1.1.0
+// @description  关键词分组、分区高亮、圆角荧光背景与阴影、短词覆盖长词、可拖动或贴边的设置入口。
 // @match        https://linux.do/*
 // @run-at       document-idle
 // @noframes
@@ -25,7 +25,7 @@
   const REGION_SELECTOR = REGIONS.map(region => region.selector).join(',');
   const PALETTE = ['#18f0ff', '#edff00', '#ff5cc9', '#83ff38', '#ff913b'];
   const INITIAL_SETTINGS = {
-    version: 1,
+    version: 2,
     rules: [],
     ui: { mode: 'right', position: { x: 0.94, y: 0.72 } },
   };
@@ -43,13 +43,14 @@
 
   function validateSettings(settings) {
     const fail = field => { throw new TypeError(`关键词高亮设置格式错误：${field}`); };
-    if (!settings || settings.version !== 1) fail('version');
+    if (!settings || settings.version !== 2) fail('version');
     if (!Array.isArray(settings.rules)) fail('rules');
     const ids = new Set();
     for (const [index, rule] of settings.rules.entries()) {
       if (!rule || typeof rule.id !== 'string' || !/^[a-z0-9-]+$/.test(rule.id) || ids.has(rule.id)) fail(`rules[${index}].id`);
       ids.add(rule.id);
-      if (typeof rule.text !== 'string') fail(`rules[${index}].text`);
+      if (typeof rule.name !== 'string') fail(`rules[${index}].name`);
+      if (!Array.isArray(rule.keywords) || rule.keywords.some(word => typeof word !== 'string')) fail(`rules[${index}].keywords`);
       if (typeof rule.color !== 'string' || !/^#[0-9a-f]{6}$/i.test(rule.color)) fail(`rules[${index}].color`);
       if (typeof rule.enabled !== 'boolean') fail(`rules[${index}].enabled`);
       if (!Array.isArray(rule.scopes) || rule.scopes.some(scope => !SCOPES.includes(scope)) || new Set(rule.scopes).size !== rule.scopes.length) fail(`rules[${index}].scopes`);
@@ -62,17 +63,32 @@
     return settings;
   }
 
+  function migrateSettings(settings) {
+    if (settings?.version !== 1) return validateSettings(settings);
+    if (!Array.isArray(settings.rules)) throw new TypeError('关键词高亮设置格式错误：rules');
+    return validateSettings({
+      ...settings,
+      version: 2,
+      rules: settings.rules.map(rule => ({
+        id: rule?.id, name: '', keywords: [rule?.text],
+        color: rule?.color, enabled: rule?.enabled, scopes: rule?.scopes,
+      })),
+    });
+  }
+
   function compileRules(rules, scope) {
     return rules.flatMap((rule, order) => {
-      if (!rule.enabled || !rule.scopes.includes(scope) || rule.text.length === 0) return [];
-      const literal = rule.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      return [{
-        ...rule,
-        order,
-        length: Array.from(rule.text).length,
-        // Lookahead includes overlapping occurrences without changing original text offsets.
-        pattern: new RegExp(`(?=(${literal}))`, 'giu'),
-      }];
+      if (!rule.enabled || !rule.scopes.includes(scope)) return [];
+      return rule.keywords.flatMap((text, index) => {
+        if (!text.length) return [];
+        const literal = text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        return [{
+          id: rule.id, key: `${rule.id}:${index}`, order,
+          length: Array.from(text).length,
+          // Lookahead includes overlapping occurrences without changing original text offsets.
+          pattern: new RegExp(`(?=(${literal}))`, 'giu'),
+        }];
+      });
     });
   }
 
@@ -103,9 +119,9 @@
       }
       while (index < events.length && events[index].at === at) {
         const event = events[index++];
-        const count = (active.get(event.rule.id)?.count || 0) + event.delta;
-        if (count === 0) active.delete(event.rule.id);
-        else active.set(event.rule.id, { rule: event.rule, count });
+        const count = (active.get(event.rule.key)?.count || 0) + event.delta;
+        if (count === 0) active.delete(event.rule.key);
+        else active.set(event.rule.key, { rule: event.rule, count });
       }
       previous = at;
     }
@@ -119,28 +135,7 @@
     return (luminance + 0.05) / 0.05 >= 1.05 / (luminance + 0.05) ? '#000000' : '#ffffff';
   }
 
-  function mergeRects(rectangles) {
-    const result = [];
-    for (const rect of rectangles) {
-      let merged = { ...rect };
-      let index = 0;
-      while (index < result.length) {
-        const other = result[index];
-        if (merged.left <= other.right && merged.right >= other.left && merged.top < other.bottom && merged.bottom > other.top) {
-          merged = {
-            left: Math.min(merged.left, other.left), right: Math.max(merged.right, other.right),
-            top: Math.min(merged.top, other.top), bottom: Math.max(merged.bottom, other.bottom),
-          };
-          result.splice(index, 1);
-          index = 0;
-        } else index++;
-      }
-      result.push(merged);
-    }
-    return result;
-  }
-
-  const core = { validateSettings, compileRules, findSegments, contrastText, mergeRects };
+  const core = { validateSettings, migrateSettings, compileRules, findSegments, contrastText };
   if (typeof window === 'undefined' && typeof module === 'object' && module.exports) {
     module.exports = core;
     return;
@@ -167,7 +162,7 @@
         return;
       }
       if (node.nodeType !== Node.ELEMENT_NODE) return;
-      if (node.matches(SKIP_SELECTOR) || node.tagName === 'BR') {
+      if (node.matches(SKIP_SELECTOR) || node.tagName === 'BR' || (node !== root && node.matches(REGION_SELECTOR))) {
         flush();
         return;
       }
@@ -181,20 +176,45 @@
     return runs;
   }
 
-  function rangeForSegment(run, segment) {
-    const first = run.nodes.find(item => item.end > segment.start);
-    const last = run.nodes.find(item => item.end >= segment.end);
-    const range = document.createRange();
-    range.setStart(first.node, segment.start - first.start);
-    range.setEnd(last.node, segment.end - last.start);
-    return range;
-  }
-
   function createElement(tag, className, text) {
     const element = document.createElement(tag);
     if (className) element.className = className;
     if (text !== undefined) element.textContent = text;
     return element;
+  }
+
+  const ICONS = {
+    marker: ['m15 4 5 5-9 9H6v-5z', 'm13 6 5 5', 'M4 21h16'],
+    settings: ['M4 7h16', 'M4 17h16', 'M8 4v6', 'M16 14v6'],
+    trash: ['M3 6h18', 'M9 6V3h6v3', 'm5 6 1 15h12l1-15', 'M10 10v7', 'M14 10v7'],
+    close: ['m6 6 12 12', 'M18 6 6 18'],
+    plus: ['M12 5v14', 'M5 12h14'],
+  };
+
+  function createIcon(name) {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.7');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    for (const d of ICONS[name]) {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.append(path);
+    }
+    return svg;
+  }
+
+  function iconButton(icon, label, className = 'icon-button') {
+    const button = createElement('button', className);
+    button.type = 'button';
+    button.setAttribute('aria-label', label);
+    button.title = label;
+    button.append(createIcon(icon));
+    return button;
   }
 
   function createView() {
@@ -204,55 +224,71 @@
     const shadow = host.attachShadow({ mode: 'open' });
     const style = createElement('style');
     style.textContent = `
-      :host { color-scheme: light dark; font: 14px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
+      :host { color-scheme: light dark; font: 13px/1.5 system-ui, -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif; }
       *, *::before, *::after { box-sizing: border-box; }
       [hidden] { display: none !important; }
-      button, input, select { font: inherit; }
+      button, input, select, textarea { font: inherit; }
       button, select, input[type="checkbox"], input[type="color"] { cursor: pointer; }
-      button { border: 1px solid light-dark(#d9dee7, #4b515c); border-radius: 8px; padding: 6px 12px; color: light-dark(#1f2933, #e7ecf3); background: light-dark(#fff, #282d36); }
+      button { border: 1px solid light-dark(#d9dee7, #4b515c); border-radius: 7px; padding: 5px 9px; color: light-dark(#1f2933, #e7ecf3); background: light-dark(#fff, #282d36); }
       button:hover { background: light-dark(#f1f4f7, #353b46); }
-      .entry { position: fixed; z-index: 2147483647; margin: 0; border: 0; background: #edff00; color: #16212b; box-shadow: 0 2px 6px rgb(0 0 0 / 25%); user-select: none; touch-action: none; }
-      .entry:hover { background: #dfff00; }
-      .entry[data-mode="left"], .entry[data-mode="right"] { top: 50%; transform: translateY(-50%); writing-mode: vertical-rl; width: 30px; height: 78px; padding: 12px 6px; }
-      .entry[data-mode="left"] { left: 0; right: auto; border-radius: 0 8px 8px 0; }
-      .entry[data-mode="right"] { right: 0; left: auto; border-radius: 8px 0 0 8px; }
-      .entry[data-mode="floating"] { width: 52px; height: 44px; padding: 0; border-radius: 9px; cursor: move; }
-      dialog { width: min(700px, calc(100vw - 48px)); max-height: calc(100dvh - 48px); padding: 0; border: 1px solid light-dark(#dce1e8, #404855); border-radius: 14px; background: light-dark(#fff, #1e232b); color: light-dark(#202936, #e6edf6); box-shadow: 0 16px 64px rgb(0 0 0 / 28%); }
-      dialog::backdrop { background: rgb(0 0 0 / 35%); }
-      .header { display: flex; justify-content: space-between; align-items: center; gap: 16px; padding: 18px 20px; border-bottom: 1px solid light-dark(#e6eaf0, #353e4c); }
-      .heading { font-size: 18px; font-weight: 600; margin: 0; }
-      .hint { font-size: 12px; color: light-dark(#5e6a79, #aebbd0); margin: 3px 0 0; }
-      .content { padding: 18px 20px 22px; }
-      .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
-      .toolbar label { display: flex; align-items: center; gap: 8px; }
-      select, input[type="text"] { color: inherit; background: light-dark(#fff, #282f3a); border: 1px solid light-dark(#cfd7e2, #4a5669); border-radius: 7px; padding: 7px 9px; }
-      .add { margin-left: auto; background: #edff00; color: #16212b; border-color: transparent; }
-      .add:hover { background: #dfff00; }
-      .rules { display: flex; flex-direction: column; gap: 12px; }
-      .rule { padding: 13px; border: 1px solid light-dark(#e0e6ee, #414b5b); border-radius: 9px; }
-      .rule-main { display: flex; align-items: center; gap: 9px; }
-      .text { min-width: 0; flex: 1; }
-      .color { flex: 0 0 auto; width: 36px; height: 34px; padding: 2px; background: transparent; border: 1px solid light-dark(#cfd7e2, #4a5669); border-radius: 7px; }
-      .remove { flex: 0 0 auto; padding: 5px 9px; }
-      .rule-scopes { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; margin-top: 10px; }
+      svg { display: block; width: 18px; height: 18px; flex: 0 0 auto; }
+      .icon-button { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 30px; padding: 5px; border-color: transparent; background: transparent; }
+      .entry { position: fixed; z-index: 2147483647; display: grid; place-items: center; margin: 0; padding: 0; border: 1px solid #dde2ea; background: #fff; color: #4b5565; box-shadow: 0 2px 10px rgb(0 0 0 / 12%); user-select: none; touch-action: none; }
+      .entry:hover { background: #f8fafc; color: #1f2937; box-shadow: 0 3px 12px rgb(0 0 0 / 18%); }
+      .entry svg { width: 21px; height: 21px; }
+      .entry[data-mode="left"], .entry[data-mode="right"] { top: 50%; transform: translateY(-50%); width: 34px; height: 42px; }
+      .entry[data-mode="left"] { left: 0; right: auto; border-left: 0; border-radius: 0 11px 11px 0; }
+      .entry[data-mode="right"] { right: 0; left: auto; border-right: 0; border-radius: 11px 0 0 11px; }
+      .entry[data-mode="floating"] { width: 40px; height: 40px; border-radius: 12px; cursor: move; }
+      dialog { width: min(540px, calc(100vw - 32px)); max-height: calc(100dvh - 32px); padding: 0; border: 1px solid light-dark(#dce1e8, #404855); border-radius: 13px; background: light-dark(#fff, #1e232b); color: light-dark(#202936, #e6edf6); box-shadow: 0 16px 64px rgb(0 0 0 / 24%); }
+      dialog::backdrop { background: rgb(0 0 0 / 28%); }
+      .header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid light-dark(#e6eaf0, #353e4c); }
+      .heading { font-size: 16px; font-weight: 600; margin: 0; }
+      .hint { font-size: 12px; color: light-dark(#778394, #aebbd0); margin: 2px 0 0; }
+      .content { padding: 13px 16px 15px; }
+      .toolbar { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin-bottom: 11px; }
+      .toolbar label { display: flex; align-items: center; gap: 7px; color: light-dark(#687587, #aebbd0); }
+      select, input[type="text"], textarea { color: inherit; background: light-dark(#fff, #282f3a); border: 1px solid light-dark(#dce2eb, #4a5669); border-radius: 6px; padding: 5px 7px; }
+      .add { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; background: light-dark(#f0f3f7, #303a48); font-weight: 500; }
+      .add svg { width: 15px; height: 15px; }
+      .rules { display: flex; flex-direction: column; gap: 5px; }
+      .rule { display: flex; align-items: center; gap: 7px; padding: 6px 7px; border: 1px solid light-dark(#e4e8ef, #414b5b); border-radius: 8px; }
+      .rule[data-paused="true"] { opacity: .65; }
+      .group-edit { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; text-align: left; border: 0; padding: 2px 3px; background: transparent; }
+      .group-label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .group-count { flex: 0 0 auto; font-size: 11px; color: light-dark(#7b8797, #aebbd0); }
+      .color { flex: 0 0 auto; width: 25px; height: 25px; padding: 0; background: transparent; border: 0; border-radius: 6px; overflow: hidden; }
+      .color::-webkit-color-swatch-wrapper { padding: 0; }
+      .color::-webkit-color-swatch { border: 1px solid rgb(0 0 0 / 9%); border-radius: 6px; }
+      .options { display: flex; align-items: center; gap: 4px; padding: 4px 6px; font-size: 11px; border: 0; color: light-dark(#687587, #b5c0d0); background: transparent; }
+      .options svg { width: 15px; height: 15px; }
+      .remove { color: light-dark(#8c96a4, #aebbd0); }
+      .remove:hover { color: light-dark(#b42318, #ffb4ac); background: light-dark(#fff0ef, #462c2c); }
+      .popover { inset: auto; margin: 0; padding: 12px; border: 1px solid light-dark(#dce2eb, #465263); border-radius: 10px; color: light-dark(#202936, #e6edf6); background: light-dark(#fff, #252c36); box-shadow: 0 8px 28px rgb(0 0 0 / 18%); max-height: calc(100dvh - 32px); overflow: auto; }
+      .keyword-panel { width: min(370px, calc(100vw - 32px)); }
+      .options-panel { width: 174px; }
+      .panel-heading { font-weight: 600; margin: 0 0 9px; }
+      .name { display: block; width: 100%; margin-bottom: 9px; }
+      .keyword-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 9px; }
+      .keyword-item { display: flex; align-items: center; gap: 2px; min-width: 0; }
+      .text { width: 100%; min-width: 0; height: 31px; min-height: 31px; resize: vertical; white-space: pre; }
+      .keyword-item .icon-button { width: 23px; height: 28px; padding: 4px; }
+      .keyword-item svg { width: 13px; height: 13px; }
+      .panel-hint { margin: 8px 0 0; font-size: 11px; color: light-dark(#7b8797, #aebbd0); }
+      .rule-scopes { display: flex; flex-direction: column; gap: 9px; }
       .check { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
       input[type="checkbox"] { accent-color: light-dark(#35455f, #b9c9e0); margin: 0; width: 15px; height: 15px; }
-      .rule-status { color: light-dark(#66758a, #aebbd0); font-size: 12px; }
       .empty { margin: 24px 0; text-align: center; color: light-dark(#66758a, #aebbd0); }
       .error { color: light-dark(#b42318, #ffb4ac); background: light-dark(#fff0ef, #462c2c); border-radius: 7px; padding: 10px 12px; margin-bottom: 14px; overflow-wrap: anywhere; }
-      .footer { margin: 16px 0 0; color: light-dark(#66758a, #aebbd0); font-size: 12px; }
-      @media (max-width: 500px) { .header, .content { padding: 14px; } .rule-main { flex-wrap: wrap; } .text { flex-basis: calc(100% - 80px); } .add { margin-left: 0; } }
+      .footer { margin: 11px 0 0; color: light-dark(#778394, #aebbd0); font-size: 11px; }
     `;
-    const entry = createElement('button', 'entry', '高亮');
-    entry.type = 'button';
-    entry.setAttribute('aria-label', '打开关键词高亮设置');
+    const entry = iconButton('marker', '打开关键词高亮设置', 'entry');
     const dialog = createElement('dialog');
     dialog.setAttribute('aria-label', '关键词高亮设置');
     const header = createElement('div', 'header');
     const heading = createElement('div');
-    heading.append(createElement('h2', 'heading', '关键词高亮'), createElement('p', 'hint', '荧光背景 · 阴影 · 短词覆盖长词'));
-    const close = createElement('button', '', '关闭');
-    close.type = 'button';
+    heading.append(createElement('h2', 'heading', '关键词高亮'), createElement('p', 'hint', '一组关键词，共用颜色和范围'));
+    const close = iconButton('close', '关闭');
     header.append(heading, close);
     const content = createElement('div', 'content');
     const error = createElement('div', 'error');
@@ -268,12 +304,13 @@
       mode.append(option);
     }
     modeLabel.append(mode);
-    const add = createElement('button', 'add', '添加关键词');
+    const add = createElement('button', 'add', '添加分组');
     add.type = 'button';
+    add.prepend(createIcon('plus'));
     toolbar.append(modeLabel, add);
     const ruleList = createElement('div', 'rules');
-    const empty = createElement('p', 'empty', '还没有关键词，点击「添加关键词」开始设置。');
-    const footer = createElement('p', 'footer', '修改立即保存并生效。包含匹配，忽略大小写；代码也高亮。关键词留空或未勾选区域时不生效。');
+    const empty = createElement('p', 'empty', '还没有关键词，点击「添加分组」开始设置。');
+    const footer = createElement('p', 'footer', '点组名编辑关键词，点范围调整设置。修改立即生效。');
     content.append(error, toolbar, empty, ruleList, footer);
     dialog.append(header, content);
     shadow.append(style, entry, dialog);
@@ -288,113 +325,119 @@
       open();
     }
     close.addEventListener('click', () => dialog.close());
-    dialog.addEventListener('close', () => { entry.style.visibility = ''; });
+    dialog.addEventListener('close', () => {
+      for (const panel of shadow.querySelectorAll(':popover-open')) panel.hidePopover();
+      entry.style.visibility = '';
+    });
     return { host, shadow, entry, dialog, mode, add, ruleList, empty, error, open, report };
   }
 
-  function createPainter() {
-    const names = new Set();
-    const css = createElement('style');
-    css.dataset.ldkhOwned = 'highlight-styles';
-    document.head.append(css);
-    const host = createElement('div');
-    host.dataset.ldkhOwned = 'shadows';
-    host.id = 'ldkh-shadows';
-    const shadow = host.attachShadow({ mode: 'open' });
-    const style = createElement('style');
-    // A document layer beneath site menus keeps decorative shadows from covering navigation.
-    style.textContent = `
-      :host { position: fixed; inset: 0; pointer-events: none; z-index: 1; overflow: hidden; }
-      .shadow { position: absolute; background: transparent; box-shadow: 0 2px 3px rgb(0 0 0 / 28%), 0 0 5px color-mix(in srgb, var(--color) 35%, transparent); }
-    `;
-    const layer = createElement('div');
-    layer.setAttribute('aria-hidden', 'true');
-    shadow.append(style, layer);
-    document.body.append(host);
-
-    function paintHighlights(roots, rules) {
-      const grouped = new Map(rules.map(rule => [rule.id, []]));
-      for (const data of roots.values()) {
-        for (const item of data.ranges) grouped.get(item.ruleId).push(item.range);
-      }
-      for (const name of names) CSS.highlights.delete(name);
-      names.clear();
-      const declarations = [];
-      for (const rule of rules) {
-        const ranges = grouped.get(rule.id);
-        if (!ranges.length) continue;
-        const name = `ldkh-${rule.id}`;
-        const highlight = new Highlight();
-        for (const range of ranges) highlight.add(range);
-        CSS.highlights.set(name, highlight);
-        names.add(name);
-        declarations.push(`::highlight(${name}) { background-color: ${rule.color}; color: ${contrastText(rule.color)}; }`);
-      }
-      css.textContent = declarations.join('\n');
-    }
-
-    function clipBox(root) {
-      const clip = { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight };
-      for (let element = root; element; element = element.parentElement) {
-        const styleValue = getComputedStyle(element);
-        const clipsX = ['hidden', 'clip', 'scroll', 'auto'].includes(styleValue.overflowX);
-        const clipsY = ['hidden', 'clip', 'scroll', 'auto'].includes(styleValue.overflowY);
-        if (!clipsX && !clipsY) continue;
-        const rect = element.getBoundingClientRect();
-        const left = rect.left + element.clientLeft;
-        const top = rect.top + element.clientTop;
-        if (clipsX) { clip.left = Math.max(clip.left, left); clip.right = Math.min(clip.right, left + element.clientWidth); }
-        if (clipsY) { clip.top = Math.max(clip.top, top); clip.bottom = Math.min(clip.bottom, top + element.clientHeight); }
-      }
-      return clip;
-    }
-
-    function paintShadows(roots, rules) {
-      const colors = new Map(rules.map(rule => [rule.id, rule.color]));
-      const boxes = [];
-      for (const data of roots.values()) {
-        for (const item of data.ranges) {
-          const ancestor = item.range.commonAncestorContainer;
-          const clip = clipBox(ancestor.nodeType === Node.ELEMENT_NODE ? ancestor : ancestor.parentElement);
-          const rects = [...item.range.getClientRects()].map(rect => ({
-            left: Math.max(rect.left, clip.left), right: Math.min(rect.right, clip.right),
-            top: Math.max(rect.top, clip.top), bottom: Math.min(rect.bottom, clip.bottom),
-          })).filter(rect => rect.right > rect.left && rect.bottom > rect.top);
-          for (const rect of mergeRects(rects)) boxes.push({ ...rect, color: colors.get(item.ruleId) });
-        }
-      }
-      const fragment = document.createDocumentFragment();
-      for (const box of boxes) {
-        const element = createElement('div', 'shadow');
-        element.style.left = `${box.left}px`;
-        element.style.top = `${box.top}px`;
-        element.style.width = `${box.right - box.left}px`;
-        element.style.height = `${box.bottom - box.top}px`;
-        element.style.setProperty('--color', box.color);
-        fragment.append(element);
-      }
-      layer.replaceChildren(fragment);
-    }
-    return { paintHighlights, paintShadows };
-  }
-
-  function createHighlighter(painter) {
+  function createHighlighter() {
     const roots = new Map();
     const dirty = new Set();
+    const sources = new WeakMap();
     let compiled = new Map();
-    let rules = [];
-    let frame = null;
-    let rescan = true;
-    let recolor = false;
-    const sizes = new ResizeObserver(() => schedule());
+    let colors = new Map();
+    const css = createElement('style');
+    css.dataset.ldkhOwned = 'highlight-styles';
+    // One inline fragment paints its background, rounded corners and shadow together.
+    // Scrolling and line wrapping are handled by layout, without a second geometry layer.
+    css.textContent = `
+      ldkh-text[data-ldkh-owned="text"] { display: contents; }
+      mark[data-ldkh-rule] {
+        font: inherit; line-height: inherit; margin: 0; padding: 0; border: 0;
+        color: var(--ldkh-text); background: var(--ldkh-color); border-radius: 3px;
+        box-shadow: 0 1px 3px rgb(0 0 0 / 22%), 0 0 4px color-mix(in srgb, var(--ldkh-color) 30%, transparent);
+        -webkit-box-decoration-break: clone; box-decoration-break: clone;
+      }
+    `;
+    document.head.append(css);
+
+    function restore(data) {
+      for (const record of data.records) {
+        sources.delete(record.source);
+        if (record.host.contains(record.source)) {
+          const text = record.replacement === null ? record.host.textContent : record.replacement;
+          record.source.data = text;
+          if (record.host.parentNode) record.host.replaceWith(record.source);
+          else record.source.remove();
+        } else {
+          // If the site moves/replaces its bound Text, retire every fragment we made
+          // and preserve the site's replacement nodes at their original position.
+          const replacements = [];
+          function visit(node) {
+            if (!record.generated.has(node)) { replacements.push(node); return; }
+            for (const child of node.childNodes) visit(child);
+          }
+          for (const child of record.host.childNodes) visit(child);
+          record.source.data = record.replacement === null ? record.value : record.replacement;
+          if (record.source.parentNode === record.firstParent) record.source.remove();
+          record.host.replaceWith(...replacements);
+        }
+      }
+      data.records.clear();
+    }
+
+    function wrapText(source, segments, data) {
+      const text = source.data;
+      const host = createElement('ldkh-text');
+      host.dataset.ldkhOwned = 'text';
+      const record = { source, host, value: text, generated: new Set(), firstParent: null, replacement: null };
+      data.records.add(record);
+      sources.set(source, record);
+      source.replaceWith(host);
+      let offset = 0;
+      let first = true;
+      function appendText(value, parent) {
+        if (!value.length) return;
+        const node = first ? source : document.createTextNode(value);
+        node.data = value;
+        record.generated.add(node);
+        first = false;
+        parent.append(node);
+      }
+      for (const segment of segments) {
+        appendText(text.slice(offset, segment.start), host);
+        const mark = createElement('mark');
+        record.generated.add(mark);
+        mark.dataset.ldkhRule = segment.ruleId;
+        const color = colors.get(segment.ruleId);
+        mark.style.setProperty('--ldkh-color', color);
+        mark.style.setProperty('--ldkh-text', contrastText(color));
+        appendText(text.slice(segment.start, segment.end), mark);
+        host.append(mark);
+        offset = segment.end;
+      }
+      appendText(text.slice(offset), host);
+      record.firstParent = source.parentNode;
+    }
+
+    function paint(root, data) {
+      for (const run of collectRuns(root)) {
+        const fragments = new Map();
+        let firstNode = 0;
+        for (const segment of findSegments(run.text, compiled.get(data.scope))) {
+          while (run.nodes[firstNode].end <= segment.start) firstNode++;
+          for (let index = firstNode; index < run.nodes.length && run.nodes[index].start < segment.end; index++) {
+            const item = run.nodes[index];
+            if (!fragments.has(item.node)) fragments.set(item.node, []);
+            fragments.get(item.node).push({
+              start: Math.max(segment.start, item.start) - item.start,
+              end: Math.min(segment.end, item.end) - item.start,
+              ruleId: segment.ruleId,
+            });
+          }
+        }
+        for (const [node, segments] of fragments) wrapText(node, segments, data);
+      }
+    }
 
     function discover() {
       for (const [root, data] of roots) {
         const region = REGIONS.find(item => root.matches(item.selector));
         if (!root.isConnected || !region) {
+          restore(data);
           roots.delete(root);
-          sizes.unobserve(root);
-          recolor = true;
         } else if (data.scope !== region.scope) {
           data.scope = region.scope;
           dirty.add(root);
@@ -403,78 +446,112 @@
       for (const region of REGIONS) {
         for (const root of document.querySelectorAll(region.selector)) {
           if (roots.has(root)) continue;
-          roots.set(root, { scope: region.scope, ranges: [] });
-          sizes.observe(root);
+          roots.set(root, { scope: region.scope, records: new Set() });
           dirty.add(root);
         }
       }
-      rescan = false;
     }
 
-    function flush() {
-      frame = null;
-      if (rescan) discover();
-      for (const root of dirty) {
-        const data = roots.get(root);
-        if (!data) continue;
-        data.ranges = collectRuns(root).flatMap(run => findSegments(run.text, compiled.get(data.scope)).map(segment => ({
-          range: rangeForSegment(run, segment), ruleId: segment.ruleId,
-        })));
-        recolor = true;
-      }
-      dirty.clear();
-      if (recolor) { painter.paintHighlights(roots, rules); recolor = false; }
-      painter.paintShadows(roots, rules);
-    }
-
-    function schedule() {
-      if (frame === null) frame = requestAnimationFrame(flush);
-    }
-
-    function update(nextRules) {
-      rules = nextRules;
-      compiled = new Map(SCOPES.map(scope => [scope, compileRules(rules, scope)]));
-      for (const root of roots.keys()) dirty.add(root);
-      recolor = true;
-      rescan = true;
-      schedule();
-    }
-
-    const mutations = new MutationObserver(records => {
-      let changed = false;
+    function noteChanges(records) {
+      let rescan = false;
       for (const record of records) {
+        if (record.type === 'characterData') {
+          const source = sources.get(record.target);
+          // A bound Text assignment is a whole new value, not a new first fragment.
+          if (source) source.replacement = record.target.data;
+        }
         const target = record.target.nodeType === Node.ELEMENT_NODE ? record.target : record.target.parentElement;
-        if (!target || target.closest('[data-ldkh-owned]')) continue;
+        if (!target || target.closest('[data-ldkh-owned="ui"]')) continue;
         const root = target.closest(REGION_SELECTOR);
-        if (root) { dirty.add(root); changed = true; }
-        if (record.type !== 'characterData') { rescan = true; changed = true; }
+        if (root) dirty.add(root);
+        if (record.type !== 'characterData') rescan = true;
       }
-      if (changed) schedule();
+      return rescan;
+    }
+
+    const observe = () => mutations.observe(document.body, {
+      childList: true, characterData: true, subtree: true,
+      attributes: true, attributeFilter: ['class', 'contenteditable'],
     });
-    mutations.observe(document.body, { childList: true, characterData: true, subtree: true, attributes: true, attributeFilter: ['class', 'contenteditable'] });
-    window.addEventListener('scroll', schedule, { capture: true, passive: true });
-    window.addEventListener('resize', schedule);
-    document.fonts.addEventListener('loadingdone', schedule);
-    return { update, schedule };
+    function refresh(rescan) {
+      const pendingRescan = noteChanges(mutations.takeRecords());
+      mutations.disconnect();
+      try {
+        if (rescan || pendingRescan) discover();
+        // Restore all affected regions first: a bound Text may have moved between them.
+        for (const root of dirty) {
+          const data = roots.get(root);
+          if (data) restore(data);
+        }
+        for (const root of dirty) {
+          const data = roots.get(root);
+          if (data) paint(root, data);
+        }
+        dirty.clear();
+      } finally {
+        // Only external DOM writes should schedule work; our own wrapping is not observed.
+        observe();
+      }
+    }
+    const mutations = new MutationObserver(records => {
+      const rescan = noteChanges(records);
+      if (rescan || dirty.size) refresh(rescan);
+    });
+    observe();
+    return {
+      update(rules) {
+        compiled = new Map(SCOPES.map(scope => [scope, compileRules(rules, scope)]));
+        colors = new Map(rules.map(rule => [rule.id, rule.color]));
+        for (const root of roots.keys()) dirty.add(root);
+        refresh(true);
+      },
+    };
+  }
+
+  function attachPopover(button, panel) {
+    panel.setAttribute('popover', 'auto');
+    button.setAttribute('aria-haspopup', 'dialog');
+    button.setAttribute('aria-expanded', 'false');
+    panel.addEventListener('toggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
+    function open() {
+      panel.showPopover();
+      const anchor = button.getBoundingClientRect();
+      const bounds = panel.getBoundingClientRect();
+      const gutter = 16;
+      panel.style.left = `${Math.max(gutter, Math.min(anchor.left, window.innerWidth - bounds.width - gutter))}px`;
+      const below = anchor.bottom + 6;
+      const top = below + bounds.height <= window.innerHeight - gutter ? below : anchor.top - bounds.height - 6;
+      panel.style.top = `${Math.max(gutter, top)}px`;
+    }
+    button.addEventListener('click', () => {
+      if (panel.matches(':popover-open')) panel.hidePopover();
+      else open();
+    });
+    return open;
   }
 
   function createRuleCard(rule, onChange, onRemove) {
+    let current = rule;
     const card = createElement('div', 'rule');
     card.dataset.ruleId = rule.id;
-    const main = createElement('div', 'rule-main');
-    const text = createElement('input', 'text');
-    text.type = 'text';
-    text.value = rule.text;
-    text.placeholder = '输入关键词';
-    text.setAttribute('aria-label', '关键词');
+    const edit = createElement('button', 'group-edit');
+    edit.type = 'button';
+    edit.setAttribute('aria-label', '编辑关键词分组');
+    const label = createElement('span', 'group-label');
+    const count = createElement('span', 'group-count');
+    edit.append(label, count);
     const color = createElement('input', 'color');
     color.type = 'color';
     color.value = rule.color;
-    color.setAttribute('aria-label', '关键词背景色');
-    const remove = createElement('button', 'remove', '删除');
-    remove.type = 'button';
+    color.setAttribute('aria-label', '分组背景色');
+    const remove = iconButton('trash', '删除分组', 'icon-button remove');
+    const options = iconButton('settings', '分组设置', 'options');
+    const summary = createElement('span');
+    options.append(summary);
+    const optionPanel = createElement('div', 'popover options-panel');
+    optionPanel.setAttribute('aria-label', '分组设置');
+    optionPanel.setAttribute('role', 'dialog');
     const scopes = createElement('div', 'rule-scopes');
-    const status = createElement('span', 'rule-status');
     const checks = new Map();
     function check(labelText, checked) {
       const label = createElement('label', 'check');
@@ -487,23 +564,76 @@
     }
     const enabled = check('启用', rule.enabled);
     for (const region of REGIONS) checks.set(region.scope, check(region.label, rule.scopes.includes(region.scope)));
-    function refreshStatus() {
-      status.textContent = !text.value.length ? '未填写关键词' : !enabled.checked ? '已暂停' : ![...checks.values()].some(input => input.checked) ? '未选择区域' : '';
+    optionPanel.append(scopes);
+    attachPopover(options, optionPanel);
+
+    const keywordPanel = createElement('div', 'popover keyword-panel');
+    keywordPanel.setAttribute('role', 'dialog');
+    keywordPanel.setAttribute('aria-label', '编辑关键词分组');
+    const name = createElement('input', 'name');
+    name.type = 'text';
+    name.value = rule.name;
+    name.placeholder = '组名（可选），例如 Claude';
+    name.setAttribute('aria-label', '分组名称');
+    const words = createElement('div', 'keyword-list');
+    const addWord = createElement('button', '', '添加关键词');
+    addWord.type = 'button';
+    keywordPanel.append(createElement('div', 'panel-heading', '关键词分组'), name, words, addWord,
+      createElement('p', 'panel-hint', '组内关键词共用颜色、启用状态和生效区域。'));
+    const showEditor = attachPopover(edit, keywordPanel);
+
+    function refreshSummary() {
+      const filled = current.keywords.filter(word => word.length);
+      label.textContent = current.name || filled[0] || '未填写关键词';
+      count.textContent = `${filled.length} 个词`;
+      edit.title = current.keywords.join('\n');
+      const selected = REGIONS.filter(region => current.scopes.includes(region.scope));
+      summary.textContent = !current.enabled ? '已暂停' : !selected.length ? '未选区域' : selected.length === REGIONS.length ? '全部区域' : `${selected.length} 个区域`;
+      options.title = current.enabled ? selected.map(region => region.label).join('、') || '未选择区域' : '已暂停';
+      card.dataset.paused = String(!current.enabled);
     }
-    function change() {
-      refreshStatus();
-      onChange({ text: text.value, color: color.value, enabled: enabled.checked, scopes: [...checks].filter(([, input]) => input.checked).map(([scope]) => scope) });
+    function change(patch) {
+      onChange(patch);
+      current = { ...current, ...patch };
+      refreshSummary();
     }
-    text.addEventListener('input', change);
-    color.addEventListener('input', change);
-    enabled.addEventListener('change', change);
-    for (const input of checks.values()) input.addEventListener('change', change);
+    function renderKeywords() {
+      words.replaceChildren();
+      current.keywords.forEach((word, index) => {
+        const item = createElement('div', 'keyword-item');
+        const text = createElement('textarea', 'text');
+        text.rows = 1;
+        text.wrap = 'off';
+        text.value = word;
+        text.placeholder = '关键词';
+        text.setAttribute('aria-label', '关键词');
+        const deleteWord = iconButton('close', '删除关键词');
+        text.addEventListener('input', () => change({ keywords: current.keywords.map((value, at) => at === index ? text.value : value) }));
+        deleteWord.addEventListener('click', () => {
+          change({ keywords: current.keywords.filter((value, at) => at !== index) });
+          renderKeywords();
+        });
+        item.append(text, deleteWord);
+        words.append(item);
+      });
+    }
+    addWord.addEventListener('click', () => {
+      change({ keywords: [...current.keywords, ''] });
+      renderKeywords();
+      words.lastElementChild.querySelector('.text').focus();
+    });
+    name.addEventListener('input', () => change({ name: name.value }));
+    color.addEventListener('input', () => change({ color: color.value }));
+    function changeOptions() {
+      change({ enabled: enabled.checked, scopes: [...checks].filter(([, input]) => input.checked).map(([scope]) => scope) });
+    }
+    enabled.addEventListener('change', changeOptions);
+    for (const input of checks.values()) input.addEventListener('change', changeOptions);
     remove.addEventListener('click', onRemove);
-    main.append(text, color, remove);
-    scopes.append(status);
-    card.append(main, scopes);
-    refreshStatus();
-    return { card, text };
+    card.append(color, edit, options, remove, keywordPanel, optionPanel);
+    refreshSummary();
+    renderKeywords();
+    return { card, openEditor() { showEditor(); words.querySelector('.text')?.focus(); } };
   }
 
   function positionEntry(view, ui) {
@@ -567,20 +697,24 @@
     const view = createView();
     function report(error) { view.report(error); throw error; }
     try {
-      if (!globalThis.Highlight || !globalThis.CSS?.highlights) throw new Error('此浏览器不支持原生关键词高亮，请更新电脑上的 Chrome 或 Edge。');
-      let settings = validateSettings(storage.read(STORAGE_KEY, structuredClone(INITIAL_SETTINGS)));
-      const highlighter = createHighlighter(createPainter());
+      const stored = storage.read(STORAGE_KEY, structuredClone(INITIAL_SETTINGS));
+      let settings = migrateSettings(stored);
+      if (settings !== stored) storage.write(STORAGE_KEY, settings);
+      const highlighter = createHighlighter();
       function save(next) {
         try {
           validateSettings(next);
+          const rulesChanged = next.rules !== settings.rules;
           storage.write(STORAGE_KEY, next);
           settings = next;
           view.error.hidden = true;
-          highlighter.update(settings.rules);
+          if (rulesChanged) highlighter.update(settings.rules);
           positionEntry(view, settings.ui);
         } catch (error) { report(error); }
       }
+      const renderedRules = new Map();
       function renderRules() {
+        renderedRules.clear();
         view.ruleList.replaceChildren();
         view.empty.hidden = settings.rules.length > 0;
         for (const rule of settings.rules) {
@@ -588,14 +722,15 @@
             save({ ...settings, rules: settings.rules.filter(item => item.id !== rule.id) });
             renderRules();
           });
+          renderedRules.set(rule.id, rendered);
           view.ruleList.append(rendered.card);
         }
       }
       view.add.addEventListener('click', () => {
-        const rule = { id: crypto.randomUUID(), text: '', color: PALETTE[settings.rules.length % PALETTE.length], scopes: [...SCOPES], enabled: true };
+        const rule = { id: crypto.randomUUID(), name: '', keywords: [''], color: PALETTE[settings.rules.length % PALETTE.length], scopes: [...SCOPES], enabled: true };
         save({ ...settings, rules: [...settings.rules, rule] });
         renderRules();
-        view.ruleList.lastElementChild.querySelector('.text').focus();
+        renderedRules.get(rule.id).openEditor();
       });
       view.mode.addEventListener('change', () => save({ ...settings, ui: { ...settings.ui, mode: view.mode.value } }));
       attachDragging(view, () => settings, save);
@@ -603,7 +738,7 @@
       storage.listen(STORAGE_KEY, (key, oldValue, next, remote) => {
         if (!remote) return;
         try {
-          settings = validateSettings(next);
+          settings = migrateSettings(next);
           renderRules();
           positionEntry(view, settings.ui);
           highlighter.update(settings.rules);

@@ -1,9 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { compileRules, findSegments, contrastText, validateSettings, mergeRects } = require('../linuxdo-keyword-highlighter.user.js');
+const { compileRules, findSegments, contrastText, validateSettings, migrateSettings } = require('../linuxdo-keyword-highlighter.user.js');
 
-const rule = (id, text, extra = {}) => ({ id, text, color: '#18f0ff', enabled: true, scopes: ['list', 'topic', 'body'], ...extra });
-const settings = rules => ({ version: 1, rules, ui: { mode: 'right', position: { x: 0.94, y: 0.72 } } });
+const rule = (id, text, extra = {}) => ({ id, name: '', keywords: [text], color: '#18f0ff', enabled: true, scopes: ['list', 'topic', 'body'], ...extra });
+const settings = rules => ({ version: 2, rules, ui: { mode: 'right', position: { x: 0.94, y: 0.72 } } });
 const segments = (text, rules, scope = 'body') => findSegments(text, compileRules(rules, scope));
 
 test('shorter keywords cover only the overlapping part of longer keywords', () => {
@@ -69,11 +69,12 @@ test('every short binary text and keyword combination agrees with an independent
       const expected = Array.from({ length: text.length }, (_, position) => {
         const covering = rules.filter(item => {
           for (let start = 0; start <= position; start++) {
-            if (start + item.text.length > position && text.slice(start, start + item.text.length) === item.text) return true;
+            const word = item.keywords[0];
+            if (start + word.length > position && text.slice(start, start + word.length) === word) return true;
           }
           return false;
         });
-        covering.sort((a, b) => a.text.length - b.text.length);
+        covering.sort((a, b) => a.keywords[0].length - b.keywords[0].length);
         return covering[0]?.id || null;
       });
       assert.deepEqual(actual, expected, JSON.stringify({ text, rules }));
@@ -87,23 +88,25 @@ test('matching leaves source rules immutable and can be repeated', () => {
   const first = findSegments('AI ai', compiled);
   assert.deepEqual(findSegments('AI ai', compiled), first);
   assert.equal(compiled[0].pattern.lastIndex, 0);
-  assert.equal(rules[0].text, 'AI');
+  assert.deepEqual(rules[0].keywords, ['AI']);
 });
 
 test('invalid stored values fail explicitly rather than becoming default settings', () => {
   const valid = settings([rule('ai', 'AI')]);
   assert.equal(validateSettings(valid), valid);
   assert.throws(() => validateSettings(null), /设置格式错误/);
-  assert.throws(() => validateSettings({ version: 1, rules: 'broken' }), /rules/);
+  assert.throws(() => validateSettings({ version: 2, rules: 'broken' }), /rules/);
 });
 
 test('stored settings reject CSS injection, duplicate ids, invalid scopes and non-finite positions', () => {
   for (const invalid of [
-    { ...settings([]), version: 2 },
+    { ...settings([]), version: 99 },
     settings([rule('bad);body{', 'AI')]),
     settings([rule('ai', 'AI', { color: '#ffff00;display:none' })]),
     settings([rule('ai', 'AI'), rule('ai', 'API')]),
     settings([rule('ai', 'AI', { scopes: ['navigation'] })]),
+    settings([rule('ai', 'AI', { keywords: ['AI', 3] })]),
+    settings([rule('ai', 'AI', { name: null })]),
     { ...settings([]), ui: { mode: 'floating', position: { x: NaN, y: 0.5 } } },
   ]) assert.throws(() => validateSettings(invalid), /设置格式错误/);
 });
@@ -120,10 +123,41 @@ test('black or white text always has readable contrast on custom background colo
   }
 });
 
-test('duplicate inline rectangles merge, while separate lines stay separate', () => {
-  const rects = [{ left: 0, right: 10, top: 0, bottom: 12 }, { left: 0, right: 10, top: 0, bottom: 12 },
-    { left: 10, right: 25, top: 0, bottom: 12 }, { left: 0, right: 25, top: 20, bottom: 32 }];
-  const original = structuredClone(rects);
-  assert.deepEqual(mergeRects(rects), [{ left: 0, right: 25, top: 0, bottom: 12 }, { left: 0, right: 25, top: 20, bottom: 32 }]);
-  assert.deepEqual(rects, original);
+test('one group applies the same id, enabled state and scopes to all of its keywords', () => {
+  const group = rule('claude', '', { name: 'Claude', keywords: ['Claude Opus', 'Anthropic'], scopes: ['body'] });
+  assert.deepEqual(segments('claude opus / Anthropic', [group]), [
+    { start: 0, end: 11, ruleId: 'claude' }, { start: 14, end: 23, ruleId: 'claude' },
+  ]);
+  assert.deepEqual(segments('Claude Opus', [group], 'list'), []);
+  assert.deepEqual(segments('Anthropic', [{ ...group, enabled: false }]), []);
+});
+
+test('overlapping keywords within a group retain separate active intervals', () => {
+  const group = rule('group', '', { keywords: ['abcde', 'bc'] });
+  assert.deepEqual(segments('abcde', [group, rule('other', 'cde')]), [
+    { start: 0, end: 3, ruleId: 'group' }, { start: 3, end: 5, ruleId: 'other' },
+  ]);
+  assert.deepEqual(segments('aba', [rule('same', '', { keywords: ['aba', 'a', 'a', ''] })]), [
+    { start: 0, end: 3, ruleId: 'same' },
+  ]);
+});
+
+test('v1 migration preserves every keyword, color, scope, id and entry position without mutating input', () => {
+  const legacy = {
+    version: 1,
+    rules: [{ id: 'old', text: 'Claude Opus\nC++', color: '#ff5cc9', enabled: false, scopes: ['topic'] }],
+    ui: { mode: 'floating', position: { x: 0.32, y: 0.65 } },
+  };
+  const before = structuredClone(legacy);
+  const next = migrateSettings(legacy);
+  assert.deepEqual(next, { ...legacy, version: 2, rules: [rule('old', 'Claude Opus\nC++', { color: '#ff5cc9', enabled: false, scopes: ['topic'] })] });
+  assert.deepEqual(legacy, before);
+  assert.equal(migrateSettings(next), next);
+});
+
+test('migration does not conceal invalid legacy data', () => {
+  assert.throws(() => migrateSettings({ version: 1, rules: 'broken' }), /rules/);
+  const old = { version: 1, rules: [{ id: 'bad', text: 4, color: '#edff00', enabled: true, scopes: ['body'] }], ui: settings([]).ui };
+  assert.throws(() => migrateSettings(old), /keywords/);
+  assert.throws(() => migrateSettings(null), /version/);
 });

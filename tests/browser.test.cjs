@@ -21,6 +21,8 @@ async function run(channel) {
     const dialog = ui.getByRole('dialog', { name: '关键词高亮设置' });
     const cards = ui.locator('.rule');
     const firstAI = ui.locator('[data-rule-id="ai"]');
+    const openEditor = async card => { await card.getByRole('button', { name: '编辑关键词分组', exact: true }).click(); return card.locator('.keyword-panel'); };
+    const openOptions = async card => { await card.getByRole('button', { name: '分组设置', exact: true }).click(); return card.locator('.options-panel'); };
     const initialRanges = await snapshot(page);
     assert.ok(initialRanges.some(item => item.ruleId === 'openai' && item.text === 'Open' && item.root === 'list-title'));
     assert.ok(initialRanges.some(item => item.ruleId === 'phrase' && item.text === ' API' && item.root === 'list-title'));
@@ -30,18 +32,28 @@ async function run(channel) {
     assert.ok(initialRanges.every(item => item.connected));
     assert.ok(!initialRanges.some(item => item.ruleId === 'openai' && ['paragraph-a', 'linebreak'].includes(item.block)));
     assert.ok(!initialRanges.some(item => item.root === 'editor' || item.root === 'navigation'));
-    assert.equal(await page.evaluate(() => document.getElementById('body-one').innerHTML === window.originalBody), true);
+    assert.equal(await page.evaluate(() => window.__testOriginalMarkup(document.getElementById('body-one')) === window.originalBody), true);
     assert.equal(await page.evaluate(() => window.originalTitleNode.isConnected), true);
-    const shadowCount = await page.locator('#ldkh-shadows .shadow').count();
-    assert.ok(shadowCount > 0);
-    assert.notEqual(await page.locator('#ldkh-shadows .shadow').first().evaluate(element => getComputedStyle(element).boxShadow), 'none');
-    checks.push('three scopes, overlaps across inline tags, code, DOM preservation, shadows');
+    const marks = page.locator('mark[data-ldkh-rule]');
+    assert.ok(await marks.count() > 0);
+    assert.equal(await page.locator('#ldkh-shadows').count(), 0);
+    const decoration = await marks.first().evaluate(element => {
+      const style = getComputedStyle(element);
+      return { radius: style.borderRadius, shadow: style.boxShadow, break: style.boxDecorationBreak, position: style.position };
+    });
+    assert.equal(decoration.radius, '3px');
+    assert.notEqual(decoration.shadow, 'none');
+    assert.equal(decoration.break, 'clone');
+    assert.equal(decoration.position, 'static');
+    assert.equal(await entry.textContent(), '');
+    assert.equal(await entry.locator('svg').count(), 1);
+    assert.equal(await entry.evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 255)');
+    checks.push('three scopes, inline overlaps, code, original text and elements, one rounded background/shadow fragment, white icon');
 
     const idleChanges = await page.evaluate(async () => {
-      const layer = document.getElementById('ldkh-shadows').shadowRoot.querySelector('div');
       let changes = 0;
       const observer = new MutationObserver(records => { changes += records.length; });
-      observer.observe(layer, { childList: true });
+      observer.observe(document.getElementById('body-one'), { childList: true, characterData: true, subtree: true });
       for (let index = 0; index < 8; index++) await new Promise(requestAnimationFrame);
       observer.disconnect();
       return changes;
@@ -59,53 +71,87 @@ async function run(channel) {
     }), true);
     checks.push('no idle loop, original link handler, unchanged code selection');
 
-    await page.screenshot({ path: path.join(output, `${channel}-highlights-light.png`), fullPage: true });
-    await page.emulateMedia({ colorScheme: 'dark' });
-    await page.screenshot({ path: path.join(output, `${channel}-highlights-dark.png`), fullPage: true });
-    await page.emulateMedia({ colorScheme: 'light' });
     await entry.click();
     assert.equal(await dialog.isVisible(), true);
-    await ui.getByRole('button', { name: '添加关键词' }).click();
+    assert.equal((await dialog.boundingBox()).width, 540);
+    assert.ok((await cards.first().boundingBox()).height <= 44);
+    assert.equal(await ui.getByRole('checkbox').count(), 0, 'settings stay collapsed until requested');
+    await ui.getByRole('button', { name: '添加分组' }).click();
     assert.equal(await cards.count(), 4);
     const added = cards.last();
     await added.getByRole('textbox', { name: '关键词', exact: true }).fill('C++ [AI].*');
-    await added.getByRole('checkbox', { name: '列表标题', exact: true }).uncheck();
-    await added.getByRole('checkbox', { name: '帖子页标题', exact: true }).uncheck();
+    const addedOptions = await openOptions(added);
+    assert.equal(await ui.getByRole('checkbox').count(), 4);
+    await addedOptions.getByRole('checkbox', { name: '列表标题', exact: true }).uncheck();
+    await addedOptions.getByRole('checkbox', { name: '帖子页标题', exact: true }).uncheck();
     await settle(page);
     assert.ok((await snapshot(page)).some(item => item.block === 'literal' && item.text === 'C++ ['));
     const newRule = (await storedSettings(page)).rules[3];
-    assert.equal(newRule.text, 'C++ [AI].*');
+    assert.deepEqual(newRule.keywords, ['C++ [AI].*']);
     assert.deepEqual(newRule.scopes, ['body']);
-    assert.equal(await added.getByRole('textbox', { name: '关键词', exact: true }).evaluate(element => element.getRootNode().activeElement === element), false);
+    await openEditor(added);
     await added.getByRole('textbox', { name: '关键词', exact: true }).focus();
     await added.getByRole('textbox', { name: '关键词', exact: true }).press('End');
     await added.getByRole('textbox', { name: '关键词', exact: true }).press('!');
     assert.equal(await added.getByRole('textbox', { name: '关键词', exact: true }).evaluate(element => element.getRootNode().activeElement === element), true);
-    assert.equal((await storedSettings(page)).rules[3].text, 'C++ [AI].*!');
+    assert.equal((await storedSettings(page)).rules[3].keywords[0], 'C++ [AI].*!');
     await added.getByRole('textbox', { name: '关键词', exact: true }).fill('C++ [AI].*');
-    await firstAI.getByRole('checkbox', { name: '正文与回复', exact: true }).uncheck();
+    const aiOptions = await openOptions(firstAI);
+    await aiOptions.getByRole('checkbox', { name: '正文与回复', exact: true }).uncheck();
     await settle(page);
     assert.ok((await snapshot(page)).filter(item => item.ruleId === 'ai').every(item => ['list-title', 'topic-heading'].includes(item.root)));
-    await firstAI.getByRole('checkbox', { name: '正文与回复', exact: true }).check();
-    await firstAI.getByLabel('关键词背景色', { exact: true }).fill('#00ff66');
+    await aiOptions.getByRole('checkbox', { name: '正文与回复', exact: true }).check();
+    await firstAI.getByLabel('分组背景色', { exact: true }).fill('#00ff66');
     await settle(page);
-    assert.ok(await page.locator('style[data-ldkh-owned="highlight-styles"]').evaluate(element => element.textContent.includes('background-color: #00ff66')));
+    assert.ok((await marks.filter({ hasText: 'AI' }).all()).length > 0);
+    assert.ok((await page.locator('mark[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(0, 255, 102)'));
     assert.equal((await storedSettings(page)).rules[1].color, '#00ff66');
-    await firstAI.getByLabel('关键词背景色', { exact: true }).fill('#edff00');
-    await firstAI.getByRole('checkbox', { name: '启用', exact: true }).uncheck();
+    await firstAI.getByLabel('分组背景色', { exact: true }).fill('#edff00');
+    await aiOptions.getByRole('checkbox', { name: '启用', exact: true }).uncheck();
     await settle(page);
     assert.ok(!(await snapshot(page)).some(item => item.ruleId === 'ai'));
-    await firstAI.getByRole('checkbox', { name: '启用', exact: true }).check();
+    await aiOptions.getByRole('checkbox', { name: '启用', exact: true }).check();
+    await openEditor(firstAI);
     await firstAI.getByRole('textbox', { name: '关键词', exact: true }).fill('');
     await settle(page);
     assert.ok(!(await snapshot(page)).some(item => item.ruleId === 'ai'));
-    assert.equal(await firstAI.locator('.rule-status').textContent(), '未填写关键词');
+    assert.equal(await firstAI.locator('.group-label').textContent(), '未填写关键词');
     await firstAI.getByRole('textbox', { name: '关键词', exact: true }).fill('AI');
     await settle(page);
+    await page.keyboard.press('Escape');
+
+    await ui.getByRole('button', { name: '添加分组' }).click();
+    const claude = cards.last();
+    const claudeId = await claude.getAttribute('data-rule-id');
+    const claudeEditor = claude.locator('.keyword-panel');
+    await claudeEditor.getByRole('textbox', { name: '分组名称', exact: true }).fill('Claude');
+    await claudeEditor.getByRole('textbox', { name: '关键词', exact: true }).fill('Claude Opus');
+    await claudeEditor.getByRole('button', { name: '添加关键词', exact: true }).click();
+    await claudeEditor.getByRole('textbox', { name: '关键词', exact: true }).last().fill('Anthropic');
+    await claudeEditor.getByRole('button', { name: '添加关键词', exact: true }).click();
+    await claudeEditor.getByRole('textbox', { name: '关键词', exact: true }).last().fill('Claude Sonnet');
+    assert.deepEqual((await storedSettings(page)).rules[4].keywords, ['Claude Opus', 'Anthropic', 'Claude Sonnet']);
+    assert.equal((await snapshot(page)).filter(item => item.ruleId === claudeId && item.block === 'group-example').length, 3);
+    await claudeEditor.screenshot({ path: path.join(output, `${channel}-group-editor.png`) });
+    const claudeOptions = await openOptions(claude);
+    await claudeOptions.getByRole('checkbox', { name: '列表标题', exact: true }).uncheck();
+    await claudeOptions.getByRole('checkbox', { name: '帖子页标题', exact: true }).uncheck();
+    await claude.getByLabel('分组背景色', { exact: true }).fill('#83ff38');
+    assert.equal(await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).count(), 3);
+    assert.ok((await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(131, 255, 56)'));
+    await claudeOptions.getByRole('checkbox', { name: '启用', exact: true }).uncheck();
+    assert.equal(await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).count(), 0);
+    assert.ok((await snapshot(page)).some(item => item.ruleId === 'ai'));
+    await claudeOptions.getByRole('checkbox', { name: '启用', exact: true }).check();
+    await page.keyboard.press('Escape');
     await dialog.screenshot({ path: path.join(output, `${channel}-settings.png`) });
-    checks.push('immediate save, independent regions and color, literal input, typing focus, pause, empty draft');
+    checks.push('compact rows, four collapsed options, grouped keywords share colors/scopes/pause, immediate save and focus');
 
     await ui.getByRole('button', { name: '关闭', exact: true }).click();
+    await page.screenshot({ path: path.join(output, `${channel}-highlights-light.png`), fullPage: true });
+    await page.emulateMedia({ colorScheme: 'dark' });
+    await page.screenshot({ path: path.join(output, `${channel}-highlights-dark.png`), fullPage: true });
+    await page.emulateMedia({ colorScheme: 'light' });
     await page.evaluate(() => {
       window.originalDynamicNode.data = 'OpenAI API';
       document.getElementById('posts').insertAdjacentHTML('beforeend', '<article><div class="topic-body"><div class="cooked" id="new-reply">新回复 AI</div></div></article>');
@@ -120,7 +166,48 @@ async function run(channel) {
     assert.ok(!dynamicRanges.some(item => item.root === 'list-title'));
     assert.ok(dynamicRanges.every(item => item.connected));
     assert.equal(await page.evaluate(() => window.originalDynamicNode.isConnected), true);
-    checks.push('live bound text changes, appended replies, SPA replacement, stale ranges removed');
+    await page.evaluate(() => { window.originalDynamicNode.data = 'Claude Opus / Anthropic'; });
+    await settle(page);
+    assert.equal(await page.locator('#dynamic').textContent(), 'Claude Opus / Anthropic');
+    assert.equal(await page.locator('#dynamic mark').count(), 2);
+    await page.evaluate(() => { window.originalDynamicNode.data = 'Fresh replacement'; });
+    await settle(page);
+    assert.equal(await page.locator('#dynamic').textContent(), 'Fresh replacement');
+    assert.equal(await page.locator('#dynamic mark').count(), 0);
+    assert.equal(await page.evaluate(() => document.getElementById('dynamic').firstChild === window.originalDynamicNode), true);
+    await page.evaluate(() => { window.originalDynamicNode.data = 'OpenAI API'; });
+    await settle(page);
+    checks.push('bound Text references survive repeated whole-value assignments, appended replies and SPA replacement');
+
+    await page.evaluate(() => {
+      const origin = document.createElement('p');
+      origin.id = 'move-origin'; origin.textContent = 'OpenAI API';
+      window.boundMoveNode = origin.firstChild;
+      document.getElementById('body-one').append(origin);
+      const target = document.createElement('p'); target.id = 'move-target';
+      document.getElementById('body-two').append(target);
+      const replacing = document.createElement('p');
+      replacing.id = 'replace-origin'; replacing.textContent = 'OpenAI API';
+      window.boundReplaceNode = replacing.firstChild;
+      document.getElementById('body-one').append(replacing);
+    });
+    await settle(page);
+    await page.evaluate(() => {
+      document.getElementById('move-target').append(window.boundMoveNode);
+      window.newBoundNode = document.createTextNode('Claude Sonnet');
+      window.boundReplaceNode.replaceWith(window.newBoundNode);
+    });
+    await settle(page);
+    assert.equal(await page.locator('#move-origin').textContent(), '');
+    assert.equal(await page.locator('#move-target').textContent(), 'OpenAI API');
+    assert.equal(await page.locator('#replace-origin').textContent(), 'Claude Sonnet');
+    assert.equal(await page.evaluate(() => window.boundMoveNode.isConnected && window.newBoundNode.isConnected), true);
+    assert.equal(await page.evaluate(() => window.boundReplaceNode.isConnected), false);
+    await page.evaluate(() => { window.boundMoveNode.data = 'Anthropic'; window.newBoundNode.data = 'OpenAI API'; });
+    await settle(page);
+    assert.equal(await page.locator('#move-target').textContent(), 'Anthropic');
+    assert.equal(await page.locator('#replace-origin').textContent(), 'OpenAI API');
+    checks.push('moving and replacing bound Text nodes preserve complete values, new bindings and placement');
 
     const writesBeforeRemote = await page.evaluate(() => window.__testWrites);
     const listOnly = await storedSettings(page);
@@ -141,19 +228,36 @@ async function run(channel) {
     assert.equal(await page.evaluate(() => window.__testWrites), writesBeforeRemote);
     checks.push('region changes and cross-tab changes use current scope without write loops');
 
-    await page.locator('#code-scroll').evaluate(element => { element.scrollLeft = element.scrollWidth; });
-    await settle(page);
-    const codeClip = await page.evaluate(() => {
+    await page.locator('#code-scroll').scrollIntoViewIfNeeded();
+    const scrollSamples = await page.evaluate(async () => {
       const code = document.getElementById('code-scroll');
-      const bounds = code.getBoundingClientRect();
-      const boxes = [...document.getElementById('ldkh-shadows').shadowRoot.querySelectorAll('.shadow')]
-        .map(element => element.getBoundingClientRect())
-        .filter(rect => rect.top >= bounds.top && rect.bottom <= bounds.bottom);
-      return { count: boxes.length, clipped: boxes.every(rect => rect.left >= bounds.left && rect.right <= bounds.right) };
+      const mark = code.querySelector('mark');
+      const range = document.createRange();
+      range.selectNodeContents(mark);
+      const samples = [];
+      let changes = 0;
+      const observer = new MutationObserver(records => { changes += records.length; });
+      observer.observe(code, { childList: true, characterData: true, subtree: true });
+      for (const x of [0, (code.scrollWidth - code.clientWidth) / 2, code.scrollWidth]) {
+        code.scrollLeft = x;
+        const box = mark.getBoundingClientRect();
+        const text = range.getBoundingClientRect();
+        samples.push({ delta: Math.abs(box.left - text.left) + Math.abs(box.right - text.right), shadow: getComputedStyle(mark).boxShadow });
+        await new Promise(requestAnimationFrame);
+      }
+      for (const y of [window.scrollY + 100, 0, 240]) {
+        window.scrollTo(0, y);
+        const box = mark.getBoundingClientRect();
+        const text = range.getBoundingClientRect();
+        samples.push({ delta: Math.abs(box.left - text.left) + Math.abs(box.right - text.right), shadow: getComputedStyle(mark).boxShadow });
+        await new Promise(requestAnimationFrame);
+      }
+      observer.disconnect();
+      return { samples, changes };
     });
-    assert.ok(codeClip.count > 0);
-    assert.equal(codeClip.clipped, true);
-    checks.push('horizontal code scrolling clips shadow boxes');
+    assert.ok(scrollSamples.samples.every(sample => sample.delta < 0.1 && sample.shadow !== 'none'));
+    assert.equal(scrollSamples.changes, 0, 'scrolling must not repaint an independent shadow layer or rewrite text');
+    checks.push('horizontal and vertical scroll samples retain a single native fragment without DOM churn');
 
     await entry.click();
     await ui.getByRole('combobox', { name: '设置入口位置' }).selectOption('left');
@@ -170,7 +274,11 @@ async function run(channel) {
     const beforeDrag = await entry.boundingBox();
     await page.mouse.move(beforeDrag.x + beforeDrag.width / 2, beforeDrag.y + beforeDrag.height / 2);
     await page.mouse.down();
-    await page.mouse.move(beforeDrag.x - 220, beforeDrag.y - 120, { steps: 6 });
+    const markBeforeDrag = await marks.first().boundingBox();
+    for (let step = 1; step <= 6; step++) {
+      await page.mouse.move(beforeDrag.x - 220 * step / 6, beforeDrag.y - 120 * step / 6);
+      assert.deepEqual(await marks.first().boundingBox(), markBeforeDrag);
+    }
     await page.mouse.up();
     await settle(page);
     const afterDrag = await entry.boundingBox();
@@ -185,7 +293,7 @@ async function run(channel) {
     const afterReload = await entry.boundingBox();
     assert.ok(Math.abs(afterReload.x - afterDrag.x) < 1);
     assert.ok(Math.abs(afterReload.y - afterDrag.y) < 1);
-    assert.equal(await cards.count(), 4);
+    assert.equal(await cards.count(), 5);
     await page.setViewportSize({ width: 800, height: 600 });
     await settle(page);
     const resized = await entry.boundingBox();
@@ -200,17 +308,31 @@ async function run(channel) {
 
     assert.deepEqual(errors, []);
     await entry.click();
-    const oldText = (await storedSettings(page)).rules[0].text;
+    const oldText = (await storedSettings(page)).rules[0].keywords[0];
+    await openEditor(cards.first());
     await page.evaluate(() => { window.__testFailWrites = true; });
     await cards.first().getByRole('textbox', { name: '关键词', exact: true }).fill('unsaved');
     assert.match(await ui.getByRole('alert').textContent(), /GM storage denied/);
-    assert.equal((await storedSettings(page)).rules[0].text, oldText);
+    assert.equal((await storedSettings(page)).rules[0].keywords[0], oldText);
     await page.evaluate(() => { window.__testFailWrites = false; });
     await cards.first().getByRole('textbox', { name: '关键词', exact: true }).fill(oldText);
     assert.equal(await ui.getByRole('alert').isVisible(), false);
     assert.ok(errors.length > 0);
     assert.ok(errors.every(message => message === 'Test: GM storage denied'));
     checks.push('failed persistence is visible and leaves saved settings unchanged');
+
+    const migrated = await context.newPage();
+    const oldSeed = { ...structuredClone(initial), version: 1, rules: initial.rules.map(({ name, keywords, ...rule }) => ({ ...rule, text: keywords[0] })) };
+    await loadFixture(migrated, oldSeed);
+    assert.deepEqual(await storedSettings(migrated), initial);
+    assert.equal(await migrated.evaluate(() => window.__testWrites), 1);
+    assert.deepEqual(await snapshot(migrated), initialRanges);
+    await migrated.reload();
+    await migrated.addScriptTag({ path: scriptPath });
+    await settle(migrated);
+    assert.equal(await migrated.evaluate(() => window.__testWrites), 0);
+    await migrated.close();
+    checks.push('legacy v1 settings migrate once and preserve every existing rule');
 
     const bad = await context.newPage();
     const badErrors = [];
@@ -222,7 +344,7 @@ async function run(channel) {
     await bad.close();
     checks.push('corrupt storage fails visibly');
 
-    return { browser: channel, result: 'passed', checks, initialRanges: initialRanges.length, visibleShadows: shadowCount, unexpectedErrors: [] };
+    return { browser: channel, result: 'passed', checks, initialFragments: initialRanges.length, scrollSamples: scrollSamples.samples.length, unexpectedErrors: [] };
   } finally {
     await context.close();
     await browser.close();
