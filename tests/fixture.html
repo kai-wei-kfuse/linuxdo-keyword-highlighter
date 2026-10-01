@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Linux.do 关键词高亮验证</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font: 16px/1.8 system-ui, "Microsoft YaHei", sans-serif; background: light-dark(#fff, #202226); color: light-dark(#222831, #e7edf7); }
+  header { position: sticky; top: 0; z-index: 10; padding: 12px 24px; border-bottom: 1px solid light-dark(#dde3eb, #404652); background: light-dark(#fff, #202226); }
+  main { max-width: 880px; margin: 0 auto; padding: 28px 52px 160px; }
+  a { color: light-dark(#2465a3, #9ccbff); }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 14px 0; border-bottom: 1px solid light-dark(#e0e4eb, #404652); }
+  h1 { font-size: 26px; font-weight: 600; margin: 32px 0 16px; }
+  h1 a { text-decoration: none; }
+  .topic-body { border-top: 1px solid light-dark(#e0e4eb, #404652); margin-top: 24px; padding-top: 20px; }
+  .meta { font-size: 13px; opacity: .7; }
+  pre { overflow: auto; background: light-dark(#f4f6f9, #181b20); border-radius: 8px; padding: 16px; line-height: 1.8; }
+  code { font-family: Consolas, monospace; }
+  .syntax { color: light-dark(#8757a0, #d5a7e9); }
+  .comment { opacity: .65; }
+  #code-scroll { width: 300px; }
+  #hidden-code { width: 2000px; }
+  #scope-status { font-size: 12px; }
+</style>
+<header>LINUX DO · 验证页面 <span id="navigation">AI 导航文字不应高亮</span></header>
+<main>
+  <div id="list-container">
+    <table class="topic-list"><tbody>
+      <tr class="topic-list-item"><td>
+        <a class="title raw-link raw-topic-link" id="list-title" href="/t/topic/test"><span dir="auto">用 Open<span>AI</span> API 构建 AI 助手</span></a>
+        <div class="meta">作者 AI-user · <span class="discourse-tags">AI 标签不应高亮</span></div>
+      </td></tr>
+    </tbody></table>
+  </div>
+  <div id="topic-title"><h1><a class="fancy-title" id="topic-heading" href="/t/topic/test"><span dir="auto">OpenAI API 与 AI 工作流</span></a><span class="topic-statuses"> AI 状态不应高亮</span></h1></div>
+  <section id="posts">
+    <article id="post_1"><div class="topic-body">
+      <div class="meta username">AI-user</div>
+      <div class="cooked" id="body-one">
+        <p id="body-inline">我用 Open<strong>AI</strong> API 做了一个 AI 小工具。openai 也会命中。<a id="body-link" href="/t/topic/other">OpenAI 链接</a></p>
+        <p id="unicode">İ A 🧠AI</p>
+        <p id="literal">C++ [AI].* (v2) $5 \path</p>
+        <p id="dynamic">Alpha</p>
+        <p id="paragraph-a">Open</p><p id="paragraph-b">AI</p>
+        <p id="linebreak">Open<br>AI</p>
+        <pre id="code-block"><code><span class="syntax">const</span> client = <span class="syntax">new</span> Open<span class="syntax">AI</span>();
+<span class="syntax">const</span> api = "OpenAI API";
+<span class="comment">// AI 和 OpenAI</span></code></pre>
+        <pre id="code-scroll"><code>                                                        OpenAI API</code></pre>
+        <div contenteditable="true" id="editor">OpenAI 编辑器不应高亮</div>
+        <button id="post-button">AI 按钮不应高亮</button>
+        <input value="AI 输入框不应高亮">
+      </div>
+      <div class="post-controls">AI 操作区不应高亮</div>
+    </div></article>
+    <article id="post_2"><div class="topic-body"><div class="cooked" id="body-two"><p>回复：OpenAI API 和 AI 都能使用。</p></div></div></article>
+  </section>
+  <p id="scope-status">范围：列表标题、帖子页标题、正文与回复</p>
+</main>
+<script>
+  window.fixtureClicks = 0;
+  for (const link of document.querySelectorAll('a')) link.addEventListener('click', event => { event.preventDefault(); window.fixtureClicks++; });
+  window.originalBody = document.getElementById('body-one').innerHTML;
+  window.originalTitleNode = document.querySelector('#list-title span').firstChild;
+  window.originalDynamicNode = document.getElementById('dynamic').firstChild;
+</script>
+</html>

@@ -1,0 +1,15 @@
+{
+  "name": "linuxdo-keyword-highlighter",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Linux.do keyword highlighting userscript",
+  "scripts": {
+    "test": "node --test --test-timeout=60000 tests/core.test.cjs",
+    "check": "node --check linuxdo-keyword-highlighter.user.js",
+    "test:browser": "node tests/browser.test.cjs",
+    "test:live": "node tests/live-smoke.cjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
+}
