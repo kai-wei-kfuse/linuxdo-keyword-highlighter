@@ -23,6 +23,7 @@ async function run(channel) {
     const firstAI = ui.locator('[data-rule-id="ai"]');
     const openEditor = async card => { await card.getByRole('button', { name: '编辑关键词分组', exact: true }).click(); return card.locator('.keyword-panel'); };
     const openOptions = async card => { await card.getByRole('button', { name: '分组设置', exact: true }).click(); return card.locator('.options-panel'); };
+    const openColor = async card => { await card.getByRole('button', { name: '选择分组颜色', exact: true }).click(); return card.locator('.color-panel'); };
     const initialRanges = await snapshot(page);
     assert.ok(initialRanges.some(item => item.ruleId === 'openai' && item.text === 'Open' && item.root === 'list-title'));
     assert.ok(initialRanges.some(item => item.ruleId === 'phrase' && item.text === ' API' && item.root === 'list-title'));
@@ -76,6 +77,66 @@ async function run(channel) {
     assert.equal((await dialog.boundingBox()).width, 540);
     assert.ok((await cards.first().boundingBox()).height <= 44);
     assert.equal(await ui.getByRole('checkbox').count(), 0, 'settings stay collapsed until requested');
+    const editButton = firstAI.getByRole('button', { name: '编辑关键词分组', exact: true });
+    const optionButton = firstAI.getByRole('button', { name: '分组设置', exact: true });
+    const editorPanel = await openEditor(firstAI);
+    await editButton.click();
+    assert.equal(await editorPanel.isVisible(), false, 'clicking the invoker must close instead of reopening');
+    await openEditor(firstAI);
+    await editorPanel.getByRole('button', { name: '关闭关键词分组', exact: true }).click();
+    assert.equal(await editorPanel.isVisible(), false);
+    const optionsPanel = await openOptions(firstAI);
+    await optionButton.click();
+    assert.equal(await optionsPanel.isVisible(), false);
+    await openOptions(firstAI);
+    await optionsPanel.getByRole('button', { name: '关闭分组设置', exact: true }).click();
+    assert.equal(await optionsPanel.isVisible(), false);
+    await openEditor(firstAI);
+    await openOptions(firstAI);
+    assert.equal(await editorPanel.isVisible(), false);
+    assert.equal(await ui.locator(':popover-open').count(), 1);
+    await openEditor(firstAI);
+    assert.equal(await optionsPanel.isVisible(), false);
+    assert.equal(await ui.locator(':popover-open').count(), 1);
+    const mainBounds = await dialog.boundingBox();
+    await page.mouse.click(mainBounds.x + 7, mainBounds.y + mainBounds.height / 2);
+    assert.equal(await ui.locator(':popover-open').count(), 0, 'blank space inside the window closes a popup');
+    assert.equal(await dialog.isVisible(), true);
+    await editButton.focus();
+    await editButton.press('Enter');
+    assert.equal(await editorPanel.isVisible(), true);
+    await editButton.press('Enter');
+    assert.equal(await editorPanel.isVisible(), false);
+
+    const presets = [
+      ['荧光青', '#18f0ff', 'rgb(24, 240, 255)'],
+      ['荧光粉', '#ff5cc9', 'rgb(255, 92, 201)'],
+      ['荧光绿', '#83ff38', 'rgb(131, 255, 56)'],
+      ['荧光橙', '#ff913b', 'rgb(255, 145, 59)'],
+      ['荧光黄', '#edff00', 'rgb(237, 255, 0)'],
+    ];
+    const colorPanel = await openColor(firstAI);
+    assert.equal(await colorPanel.locator('.swatch').count(), 5);
+    assert.equal(await colorPanel.getByRole('button', { name: '荧光黄', exact: true }).getAttribute('aria-pressed'), 'true');
+    await colorPanel.screenshot({ path: path.join(output, `${channel}-color-picker.png`) });
+    await colorPanel.getByRole('button', { name: '关闭颜色选择', exact: true }).click();
+    assert.equal(await colorPanel.isVisible(), false);
+    for (const [label, hex, rgb] of presets) {
+      await openColor(firstAI);
+      await colorPanel.getByRole('button', { name: label, exact: true }).click();
+      assert.equal(await colorPanel.isVisible(), false);
+      assert.equal((await storedSettings(page)).rules[1].color, hex);
+      assert.ok((await page.locator('mark[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === rgb));
+      assert.deepEqual((await storedSettings(page)).rules.filter(rule => rule.id !== 'ai').map(rule => rule.color), initial.rules.filter(rule => rule.id !== 'ai').map(rule => rule.color));
+    }
+    await openOptions(firstAI);
+    await openColor(firstAI);
+    assert.equal(await optionsPanel.isVisible(), false);
+    await openEditor(firstAI);
+    assert.equal(await colorPanel.isVisible(), false);
+    await page.keyboard.press('Escape');
+    checks.push('native invoker toggles, close buttons, popup switching, inside blank space and keyboard dismissal');
+    checks.push('five fluorescent presets save and repaint only their own group');
     await ui.getByRole('button', { name: '添加分组' }).click();
     assert.equal(await cards.count(), 4);
     const added = cards.last();
@@ -101,12 +162,19 @@ async function run(channel) {
     await settle(page);
     assert.ok((await snapshot(page)).filter(item => item.ruleId === 'ai').every(item => ['list-title', 'topic-heading'].includes(item.root)));
     await aiOptions.getByRole('checkbox', { name: '正文与回复', exact: true }).check();
-    await firstAI.getByLabel('分组背景色', { exact: true }).fill('#00ff66');
+    await openColor(firstAI);
+    await colorPanel.getByLabel('自定义颜色', { exact: true }).fill('#00ff66');
     await settle(page);
     assert.ok((await marks.filter({ hasText: 'AI' }).all()).length > 0);
     assert.ok((await page.locator('mark[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(0, 255, 102)'));
     assert.equal((await storedSettings(page)).rules[1].color, '#00ff66');
-    await firstAI.getByLabel('分组背景色', { exact: true }).fill('#edff00');
+    assert.equal(await colorPanel.locator('.swatch[aria-pressed="true"]').count(), 0);
+    assert.equal(await colorPanel.locator('.color-value').textContent(), '#00ff66');
+    await colorPanel.getByRole('button', { name: '关闭颜色选择', exact: true }).click();
+    await openColor(firstAI);
+    assert.equal(await colorPanel.getByLabel('自定义颜色', { exact: true }).inputValue(), '#00ff66');
+    await colorPanel.getByRole('button', { name: '荧光黄', exact: true }).click();
+    await openOptions(firstAI);
     await aiOptions.getByRole('checkbox', { name: '启用', exact: true }).uncheck();
     await settle(page);
     assert.ok(!(await snapshot(page)).some(item => item.ruleId === 'ai'));
@@ -136,9 +204,11 @@ async function run(channel) {
     const claudeOptions = await openOptions(claude);
     await claudeOptions.getByRole('checkbox', { name: '列表标题', exact: true }).uncheck();
     await claudeOptions.getByRole('checkbox', { name: '帖子页标题', exact: true }).uncheck();
-    await claude.getByLabel('分组背景色', { exact: true }).fill('#83ff38');
+    const claudeColor = await openColor(claude);
+    await claudeColor.getByRole('button', { name: '荧光绿', exact: true }).click();
     assert.equal(await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).count(), 3);
     assert.ok((await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(131, 255, 56)'));
+    await openOptions(claude);
     await claudeOptions.getByRole('checkbox', { name: '启用', exact: true }).uncheck();
     assert.equal(await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).count(), 0);
     assert.ok((await snapshot(page)).some(item => item.ruleId === 'ai'));

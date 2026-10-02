@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 荧光关键词高亮
 // @namespace    linuxdo-keyword-highlighter
-// @version      1.1.0
+// @version      1.2.0
 // @description  关键词分组、分区高亮、圆角荧光背景与阴影、短词覆盖长词、可拖动或贴边的设置入口。
 // @match        https://linux.do/*
 // @run-at       document-idle
@@ -23,7 +23,13 @@
     { scope: 'body', label: '正文与回复', selector: '.topic-body .cooked' },
   ];
   const REGION_SELECTOR = REGIONS.map(region => region.selector).join(',');
-  const PALETTE = ['#18f0ff', '#edff00', '#ff5cc9', '#83ff38', '#ff913b'];
+  const PALETTE = [
+    { label: '荧光青', color: '#18f0ff' },
+    { label: '荧光黄', color: '#edff00' },
+    { label: '荧光粉', color: '#ff5cc9' },
+    { label: '荧光绿', color: '#83ff38' },
+    { label: '荧光橙', color: '#ff913b' },
+  ];
   const INITIAL_SETTINGS = {
     version: 2,
     rules: [],
@@ -257,9 +263,8 @@
       .group-edit { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; text-align: left; border: 0; padding: 2px 3px; background: transparent; }
       .group-label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .group-count { flex: 0 0 auto; font-size: 11px; color: light-dark(#7b8797, #aebbd0); }
-      .color { flex: 0 0 auto; width: 25px; height: 25px; padding: 0; background: transparent; border: 0; border-radius: 6px; overflow: hidden; }
-      .color::-webkit-color-swatch-wrapper { padding: 0; }
-      .color::-webkit-color-swatch { border: 1px solid rgb(0 0 0 / 9%); border-radius: 6px; }
+      .color { flex: 0 0 auto; width: 25px; height: 25px; padding: 0; background: var(--swatch); border: 1px solid rgb(0 0 0 / 9%); border-radius: 6px; }
+      .color:hover { background: var(--swatch); outline: 2px solid light-dark(#dce2eb, #566277); outline-offset: 2px; }
       .options { display: flex; align-items: center; gap: 4px; padding: 4px 6px; font-size: 11px; border: 0; color: light-dark(#687587, #b5c0d0); background: transparent; }
       .options svg { width: 15px; height: 15px; }
       .remove { color: light-dark(#8c96a4, #aebbd0); }
@@ -267,7 +272,17 @@
       .popover { inset: auto; margin: 0; padding: 12px; border: 1px solid light-dark(#dce2eb, #465263); border-radius: 10px; color: light-dark(#202936, #e6edf6); background: light-dark(#fff, #252c36); box-shadow: 0 8px 28px rgb(0 0 0 / 18%); max-height: calc(100dvh - 32px); overflow: auto; }
       .keyword-panel { width: min(370px, calc(100vw - 32px)); }
       .options-panel { width: 174px; }
-      .panel-heading { font-weight: 600; margin: 0 0 9px; }
+      .color-panel { width: 236px; }
+      .panel-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -4px -4px 8px 0; }
+      .panel-heading { font-weight: 600; margin: 0; }
+      .panel-header .icon-button { width: 26px; height: 26px; }
+      .palette { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 7px; padding: 3px 0 12px; }
+      .swatch { display: grid; place-items: center; height: 31px; padding: 0; border: 1px solid rgb(0 0 0 / 10%); background: var(--swatch); font-size: 19px; font-weight: 600; }
+      .swatch:hover { background: var(--swatch); outline: 1px solid light-dark(#9ca9bb, #b9c9e0); outline-offset: 2px; }
+      .swatch[aria-pressed="true"] { outline: 2px solid light-dark(#46556b, #d9e2f0); outline-offset: 2px; }
+      .custom-row { display: flex; align-items: center; gap: 8px; padding-top: 9px; border-top: 1px solid light-dark(#e6eaf0, #414b5b); }
+      .custom-color { width: 29px; height: 27px; padding: 2px; border: 1px solid light-dark(#dce2eb, #566277); border-radius: 6px; background: transparent; }
+      .color-value { margin-left: auto; font: 11px/1.5 Consolas, monospace; color: light-dark(#778394, #aebbd0); }
       .name { display: block; width: 100%; margin-bottom: 9px; }
       .keyword-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; margin-bottom: 9px; }
       .keyword-item { display: flex; align-items: center; gap: 2px; min-width: 0; }
@@ -508,13 +523,27 @@
     };
   }
 
-  function attachPopover(button, panel) {
+  function createPopover(className, title) {
+    const panel = createElement('div', `popover ${className}`);
     panel.setAttribute('popover', 'auto');
+    panel.setAttribute('role', 'dialog');
+    panel.setAttribute('aria-label', title);
+    const header = createElement('div', 'panel-header');
+    const close = iconButton('close', `关闭${title}`);
+    close.popoverTargetElement = panel;
+    close.popoverTargetAction = 'hide';
+    header.append(createElement('div', 'panel-heading', title), close);
+    panel.append(header);
+    return panel;
+  }
+
+  function attachPopover(button, panel) {
+    // Native invoker association prevents light-dismiss followed by a manual reopen.
+    button.popoverTargetElement = panel;
+    button.popoverTargetAction = 'toggle';
     button.setAttribute('aria-haspopup', 'dialog');
     button.setAttribute('aria-expanded', 'false');
-    panel.addEventListener('toggle', event => button.setAttribute('aria-expanded', String(event.newState === 'open')));
-    function open() {
-      panel.showPopover();
+    function position() {
       const anchor = button.getBoundingClientRect();
       const bounds = panel.getBoundingClientRect();
       const gutter = 16;
@@ -523,11 +552,14 @@
       const top = below + bounds.height <= window.innerHeight - gutter ? below : anchor.top - bounds.height - 6;
       panel.style.top = `${Math.max(gutter, top)}px`;
     }
-    button.addEventListener('click', () => {
-      if (panel.matches(':popover-open')) panel.hidePopover();
-      else open();
+    panel.addEventListener('toggle', event => {
+      button.setAttribute('aria-expanded', String(event.newState === 'open'));
+      if (event.newState === 'open') position();
     });
-    return open;
+    return () => {
+      if (!panel.matches(':popover-open')) button.click();
+      position();
+    };
   }
 
   function createRuleCard(rule, onChange, onRemove) {
@@ -540,17 +572,14 @@
     const label = createElement('span', 'group-label');
     const count = createElement('span', 'group-count');
     edit.append(label, count);
-    const color = createElement('input', 'color');
-    color.type = 'color';
-    color.value = rule.color;
-    color.setAttribute('aria-label', '分组背景色');
+    const color = createElement('button', 'color');
+    color.type = 'button';
+    color.setAttribute('aria-label', '选择分组颜色');
     const remove = iconButton('trash', '删除分组', 'icon-button remove');
     const options = iconButton('settings', '分组设置', 'options');
     const summary = createElement('span');
     options.append(summary);
-    const optionPanel = createElement('div', 'popover options-panel');
-    optionPanel.setAttribute('aria-label', '分组设置');
-    optionPanel.setAttribute('role', 'dialog');
+    const optionPanel = createPopover('options-panel', '分组设置');
     const scopes = createElement('div', 'rule-scopes');
     const checks = new Map();
     function check(labelText, checked) {
@@ -567,9 +596,7 @@
     optionPanel.append(scopes);
     attachPopover(options, optionPanel);
 
-    const keywordPanel = createElement('div', 'popover keyword-panel');
-    keywordPanel.setAttribute('role', 'dialog');
-    keywordPanel.setAttribute('aria-label', '编辑关键词分组');
+    const keywordPanel = createPopover('keyword-panel', '关键词分组');
     const name = createElement('input', 'name');
     name.type = 'text';
     name.value = rule.name;
@@ -578,9 +605,34 @@
     const words = createElement('div', 'keyword-list');
     const addWord = createElement('button', '', '添加关键词');
     addWord.type = 'button';
-    keywordPanel.append(createElement('div', 'panel-heading', '关键词分组'), name, words, addWord,
+    keywordPanel.append(name, words, addWord,
       createElement('p', 'panel-hint', '组内关键词共用颜色、启用状态和生效区域。'));
     const showEditor = attachPopover(edit, keywordPanel);
+
+    const colorPanel = createPopover('color-panel', '颜色选择');
+    const palette = createElement('div', 'palette');
+    const swatches = PALETTE.map(preset => {
+      const swatch = createElement('button', 'swatch');
+      swatch.type = 'button';
+      swatch.setAttribute('aria-label', preset.label);
+      swatch.title = `${preset.label} ${preset.color}`;
+      swatch.style.setProperty('--swatch', preset.color);
+      swatch.style.color = contrastText(preset.color);
+      swatch.addEventListener('click', () => {
+        change({ color: preset.color });
+        colorPanel.hidePopover();
+      });
+      palette.append(swatch);
+      return swatch;
+    });
+    const customRow = createElement('label', 'custom-row', '自定义');
+    const customColor = createElement('input', 'custom-color');
+    customColor.type = 'color';
+    customColor.setAttribute('aria-label', '自定义颜色');
+    const colorValue = createElement('span', 'color-value');
+    customRow.append(customColor, colorValue);
+    colorPanel.append(palette, customRow);
+    attachPopover(color, colorPanel);
 
     function refreshSummary() {
       const filled = current.keywords.filter(word => word.length);
@@ -591,6 +643,15 @@
       summary.textContent = !current.enabled ? '已暂停' : !selected.length ? '未选区域' : selected.length === REGIONS.length ? '全部区域' : `${selected.length} 个区域`;
       options.title = current.enabled ? selected.map(region => region.label).join('、') || '未选择区域' : '已暂停';
       card.dataset.paused = String(!current.enabled);
+      color.style.setProperty('--swatch', current.color);
+      color.title = `分组颜色 ${current.color}`;
+      customColor.value = current.color;
+      colorValue.textContent = current.color;
+      swatches.forEach((swatch, index) => {
+        const selected = PALETTE[index].color === current.color.toLowerCase();
+        swatch.setAttribute('aria-pressed', String(selected));
+        swatch.textContent = selected ? '✓' : '';
+      });
     }
     function change(patch) {
       onChange(patch);
@@ -623,14 +684,14 @@
       words.lastElementChild.querySelector('.text').focus();
     });
     name.addEventListener('input', () => change({ name: name.value }));
-    color.addEventListener('input', () => change({ color: color.value }));
+    customColor.addEventListener('input', () => change({ color: customColor.value }));
     function changeOptions() {
       change({ enabled: enabled.checked, scopes: [...checks].filter(([, input]) => input.checked).map(([scope]) => scope) });
     }
     enabled.addEventListener('change', changeOptions);
     for (const input of checks.values()) input.addEventListener('change', changeOptions);
     remove.addEventListener('click', onRemove);
-    card.append(color, edit, options, remove, keywordPanel, optionPanel);
+    card.append(color, edit, options, remove, keywordPanel, optionPanel, colorPanel);
     refreshSummary();
     renderKeywords();
     return { card, openEditor() { showEditor(); words.querySelector('.text')?.focus(); } };
@@ -727,7 +788,7 @@
         }
       }
       view.add.addEventListener('click', () => {
-        const rule = { id: crypto.randomUUID(), name: '', keywords: [''], color: PALETTE[settings.rules.length % PALETTE.length], scopes: [...SCOPES], enabled: true };
+        const rule = { id: crypto.randomUUID(), name: '', keywords: [''], color: PALETTE[settings.rules.length % PALETTE.length].color, scopes: [...SCOPES], enabled: true };
         save({ ...settings, rules: [...settings.rules, rule] });
         renderRules();
         renderedRules.get(rule.id).openEditor();
