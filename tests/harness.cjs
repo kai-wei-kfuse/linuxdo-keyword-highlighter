@@ -36,14 +36,14 @@ async function installAdapter(page, seed) {
       sessionStorage.setItem(key, JSON.stringify(next));
       for (const item of window.__testListeners) item.callback(key, previous, next, true);
     };
-    window.__testSnapshot = () => [...document.querySelectorAll('mark[data-ldkh-rule]')].map(mark => ({
+    window.__testSnapshot = () => [...document.querySelectorAll('[data-ldkh-rule]')].map(mark => ({
       ruleId: mark.dataset.ldkhRule, text: mark.textContent, connected: mark.isConnected,
       root: mark.closest('a.title,a.fancy-title,.cooked')?.id,
       block: mark.closest('p,pre')?.id,
     }));
     window.__testOriginalMarkup = element => {
       const clone = element.cloneNode(true);
-      for (const owned of clone.querySelectorAll('ldkh-text[data-ldkh-owned="text"],mark[data-ldkh-rule]')) owned.replaceWith(...owned.childNodes);
+      for (const owned of clone.querySelectorAll('ldkh-text[data-ldkh-owned="text"],[data-ldkh-rule]')) owned.replaceWith(...owned.childNodes);
       return clone.innerHTML;
     };
   }, { seedValue: seed, key: storageKey });

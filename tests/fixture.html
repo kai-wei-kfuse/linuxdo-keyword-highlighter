@@ -4,7 +4,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Linux.do 关键词高亮验证</title>
 <style>
-  :root { color-scheme: light dark; }
+  :root { color-scheme: light dark; --highlight: #ffff4d; }
   body { margin: 0; font: 16px/1.8 system-ui, "Microsoft YaHei", sans-serif; background: light-dark(#fff, #202226); color: light-dark(#222831, #e7edf7); }
   header { position: sticky; top: 0; z-index: 10; padding: 12px 24px; border-bottom: 1px solid light-dark(#dde3eb, #404652); background: light-dark(#fff, #202226); }
   main { max-width: 880px; margin: 0 auto; padding: 28px 52px 160px; }
@@ -43,6 +43,7 @@
         <p id="literal">C++ [AI].* (v2) $5 \path</p>
         <p id="dynamic">Alpha</p>
         <p id="group-example">Claude Opus 4.7 来自 Anthropic。也可以关注 Claude Sonnet。</p>
+        <p><mark id="native-search-mark">站内搜索原有标记</mark></p>
         <p id="paragraph-a">Open</p><p id="paragraph-b">AI</p>
         <p id="linebreak">Open<br>AI</p>
         <pre id="code-block"><code><span class="syntax">const</span> client = <span class="syntax">new</span> Open<span class="syntax">AI</span>();
@@ -55,7 +56,7 @@
       </div>
       <div class="post-controls">AI 操作区不应高亮</div>
     </div></article>
-    <article id="post_2"><div class="topic-body"><div class="cooked" id="body-two"><p>回复：OpenAI API 和 AI 都能使用。</p></div></div></article>
+    <article id="post_2"><div class="topic-body"><div class="cooked" id="body-two"><p>回复：OpenAI API 和 AI 都能使用。</p><blockquote id="quoted-reply">引用：OpenAI API 和 AI。</blockquote></div></div></article>
   </section>
   <p id="scope-status">范围：列表标题、帖子页标题、正文与回复</p>
 </main>

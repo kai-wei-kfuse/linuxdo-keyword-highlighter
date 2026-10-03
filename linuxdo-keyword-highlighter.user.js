@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 荧光关键词高亮
 // @namespace    linuxdo-keyword-highlighter
-// @version      1.2.1
+// @version      1.2.2
 // @description  关键词分组、分区高亮、圆角荧光背景与阴影、短词覆盖长词、可拖动或贴边的设置入口。
 // @match        https://linux.do/*
 // @run-at       document-idle
@@ -364,8 +364,8 @@
     // Scrolling and line wrapping are handled by layout, without a second geometry layer.
     css.textContent = `
       ldkh-text[data-ldkh-owned="text"] { display: contents; }
-      mark[data-ldkh-rule] {
-        font: inherit; line-height: inherit; margin: 0; padding: 0; border: 0;
+      ldkh-highlight[data-ldkh-rule] {
+        display: inline; font: inherit; line-height: inherit; margin: 0; padding: 0; border: 0;
         color: var(--ldkh-text); background: var(--ldkh-color); border-radius: 3px;
         box-shadow: 0 1px 3px rgb(0 0 0 / 22%), 0 0 4px color-mix(in srgb, var(--ldkh-color) 30%, transparent);
         -webkit-box-decoration-break: clone; box-decoration-break: clone;
@@ -418,7 +418,8 @@
       }
       for (const segment of segments) {
         appendText(text.slice(offset, segment.start), host);
-        const mark = createElement('mark');
+        // Discourse gives every native <mark> in .cooked its search highlight color.
+        const mark = createElement('ldkh-highlight');
         record.generated.add(mark);
         mark.dataset.ldkhRule = segment.ruleId;
         const color = colors.get(segment.ruleId);

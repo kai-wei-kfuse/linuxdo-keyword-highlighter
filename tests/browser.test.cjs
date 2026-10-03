@@ -31,11 +31,25 @@ async function run(channel) {
     assert.ok(initialRanges.some(item => item.ruleId === 'ai' && item.block === 'code-block'));
     assert.ok(initialRanges.some(item => item.root === 'body-two'));
     assert.ok(initialRanges.every(item => item.connected));
+    const postColors = { openai: 'rgb(24, 240, 255)', ai: 'rgb(237, 255, 0)', phrase: 'rgb(255, 92, 201)' };
+    async function assertPostColors() {
+      const actual = await page.locator('.cooked [data-ldkh-rule]').evaluateAll(elements => elements.map(element => ({ id: element.dataset.ldkhRule, background: getComputedStyle(element).backgroundColor })));
+      assert.equal(new Set(actual.map(item => item.id)).size, 3);
+      for (const item of actual) assert.equal(item.background, postColors[item.id], `${item.id} keeps its own color inside posts`);
+    }
+    await assertPostColors();
+    // Exact native mark rule from Linux.do's Discourse stylesheet, loaded after our styles.
+    await page.addStyleTag({ content: '.cooked mark,.d-editor-preview mark { text-decoration:none; background-color:var(--highlight); }' });
+    await assertPostColors();
+    assert.equal(await page.locator('#native-search-mark').evaluate(element => getComputedStyle(element).backgroundColor), 'rgb(255, 255, 77)');
+    assert.equal(await page.locator('#body-link [data-ldkh-rule]').count(), 2);
+    assert.ok(await page.locator('#quoted-reply [data-ldkh-rule]').count() > 0);
+    checks.push('post, link, reply and quote colors stay independent of native Discourse search mark styles');
     assert.ok(!initialRanges.some(item => item.ruleId === 'openai' && ['paragraph-a', 'linebreak'].includes(item.block)));
     assert.ok(!initialRanges.some(item => item.root === 'editor' || item.root === 'navigation'));
     assert.equal(await page.evaluate(() => window.__testOriginalMarkup(document.getElementById('body-one')) === window.originalBody), true);
     assert.equal(await page.evaluate(() => window.originalTitleNode.isConnected), true);
-    const marks = page.locator('mark[data-ldkh-rule]');
+    const marks = page.locator('[data-ldkh-rule]');
     assert.ok(await marks.count() > 0);
     assert.equal(await page.locator('#ldkh-shadows').count(), 0);
     const decoration = await marks.first().evaluate(element => {
@@ -131,7 +145,7 @@ async function run(channel) {
       await colorPanel.getByRole('button', { name: label, exact: true }).click();
       assert.equal(await colorPanel.isVisible(), false);
       assert.equal((await storedSettings(page)).rules[1].color, hex);
-      assert.ok((await page.locator('mark[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === rgb));
+      assert.ok((await page.locator('[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === rgb));
       assert.deepEqual((await storedSettings(page)).rules.filter(rule => rule.id !== 'ai').map(rule => rule.color), initial.rules.filter(rule => rule.id !== 'ai').map(rule => rule.color));
     }
     await openOptions(firstAI);
@@ -171,7 +185,7 @@ async function run(channel) {
     await colorPanel.getByLabel('自定义颜色', { exact: true }).fill('#00ff66');
     await settle(page);
     assert.ok((await marks.filter({ hasText: 'AI' }).all()).length > 0);
-    assert.ok((await page.locator('mark[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(0, 255, 102)'));
+    assert.ok((await page.locator('[data-ldkh-rule="ai"]').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(0, 255, 102)'));
     assert.equal((await storedSettings(page)).rules[1].color, '#00ff66');
     assert.equal(await colorPanel.locator('.swatch[aria-pressed="true"]').count(), 0);
     assert.equal(await colorPanel.locator('.color-value').textContent(), '#00ff66');
@@ -211,11 +225,11 @@ async function run(channel) {
     await claudeOptions.getByRole('checkbox', { name: '帖子页标题', exact: true }).uncheck();
     const claudeColor = await openColor(claude);
     await claudeColor.getByRole('button', { name: '荧光绿', exact: true }).click();
-    assert.equal(await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).count(), 3);
-    assert.ok((await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(131, 255, 56)'));
+    assert.equal(await page.locator(`[data-ldkh-rule="${claudeId}"]`).count(), 3);
+    assert.ok((await page.locator(`[data-ldkh-rule="${claudeId}"]`).evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundColor))).every(color => color === 'rgb(131, 255, 56)'));
     await openOptions(claude);
     await claudeOptions.getByRole('checkbox', { name: '启用', exact: true }).uncheck();
-    assert.equal(await page.locator(`mark[data-ldkh-rule="${claudeId}"]`).count(), 0);
+    assert.equal(await page.locator(`[data-ldkh-rule="${claudeId}"]`).count(), 0);
     assert.ok((await snapshot(page)).some(item => item.ruleId === 'ai'));
     await claudeOptions.getByRole('checkbox', { name: '启用', exact: true }).check();
     await page.keyboard.press('Escape');
@@ -244,11 +258,11 @@ async function run(channel) {
     await page.evaluate(() => { window.originalDynamicNode.data = 'Claude Opus / Anthropic'; });
     await settle(page);
     assert.equal(await page.locator('#dynamic').textContent(), 'Claude Opus / Anthropic');
-    assert.equal(await page.locator('#dynamic mark').count(), 2);
+    assert.equal(await page.locator('#dynamic [data-ldkh-rule]').count(), 2);
     await page.evaluate(() => { window.originalDynamicNode.data = 'Fresh replacement'; });
     await settle(page);
     assert.equal(await page.locator('#dynamic').textContent(), 'Fresh replacement');
-    assert.equal(await page.locator('#dynamic mark').count(), 0);
+    assert.equal(await page.locator('#dynamic [data-ldkh-rule]').count(), 0);
     assert.equal(await page.evaluate(() => document.getElementById('dynamic').firstChild === window.originalDynamicNode), true);
     await page.evaluate(() => { window.originalDynamicNode.data = 'OpenAI API'; });
     await settle(page);
@@ -306,7 +320,7 @@ async function run(channel) {
     await page.locator('#code-scroll').scrollIntoViewIfNeeded();
     const scrollSamples = await page.evaluate(async () => {
       const code = document.getElementById('code-scroll');
-      const mark = code.querySelector('mark');
+      const mark = code.querySelector('[data-ldkh-rule]');
       const range = document.createRange();
       range.selectNodeContents(mark);
       const samples = [];

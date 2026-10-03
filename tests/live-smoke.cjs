@@ -35,11 +35,11 @@ const { scriptPath, initial, installAdapter, settle } = require('./harness.cjs')
     ];
     await page.evaluate(next => window.GM_setValue('linuxdo-keyword-highlighter-v1', next), actualState);
     await page.addScriptTag({ path: scriptPath });
-    await page.waitForFunction(() => document.querySelector('mark[data-ldkh-rule="live-short"]') && document.querySelector('mark[data-ldkh-rule="live-long"]'));
+    await page.waitForFunction(() => document.querySelector('[data-ldkh-rule="live-short"]') && document.querySelector('[data-ldkh-rule="live-long"]'));
     const listEvidence = await page.evaluate(() => ({
       titles: document.querySelectorAll('.topic-list .topic-list-item a.title').length,
-      matchedFragments: document.querySelectorAll('mark[data-ldkh-rule]').length,
-      roundedShadows: [...document.querySelectorAll('mark[data-ldkh-rule]')].every(mark => getComputedStyle(mark).borderRadius === '3px' && getComputedStyle(mark).boxShadow !== 'none'),
+      matchedFragments: document.querySelectorAll('[data-ldkh-rule]').length,
+      roundedShadows: [...document.querySelectorAll('[data-ldkh-rule]')].every(mark => getComputedStyle(mark).borderRadius === '3px' && getComputedStyle(mark).boxShadow !== 'none'),
     }));
     assert.ok(listEvidence.matchedFragments > 1 && listEvidence.roundedShadows);
     await page.screenshot({ path: path.join(output, 'linuxdo-list-live.png') });
@@ -57,13 +57,13 @@ const { scriptPath, initial, installAdapter, settle } = require('./harness.cjs')
     assert.ok(bodyWord.length > 0);
     actualState.rules.push({ id: 'live-body', name: '', keywords: [bodyWord], color: '#ff5cc9', enabled: true, scopes: ['body'] });
     await page.evaluate(next => window.__testRemoteUpdate(next), actualState);
-    await page.waitForFunction(() => document.querySelector('mark[data-ldkh-rule="live-body"]'));
+    await page.waitForFunction(() => document.querySelector('[data-ldkh-rule="live-body"]'));
     await settle(page);
     const topicEvidence = await page.evaluate(() => ({
       headingTitles: document.querySelectorAll('h1 a.fancy-title').length,
       cookedPosts: document.querySelectorAll('.topic-body .cooked').length,
-      bodyFragments: document.querySelectorAll('mark[data-ldkh-rule="live-body"]').length,
-      titleFragments: document.querySelectorAll('h1 a.fancy-title mark[data-ldkh-rule="live-long"]').length,
+      bodyFragments: document.querySelectorAll('[data-ldkh-rule="live-body"]').length,
+      titleFragments: document.querySelectorAll('h1 a.fancy-title [data-ldkh-rule="live-long"]').length,
     }));
     assert.ok(topicEvidence.bodyFragments > 0 && topicEvidence.titleFragments > 0);
     assert.equal(await firstBody.evaluate(element => window.__testOriginalMarkup(element)), bodyOriginal);
