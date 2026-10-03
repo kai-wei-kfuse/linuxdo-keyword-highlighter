@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 荧光关键词高亮
 // @namespace    linuxdo-keyword-highlighter
-// @version      1.2.0
+// @version      1.2.1
 // @description  关键词分组、分区高亮、圆角荧光背景与阴影、短词覆盖长词、可拖动或贴边的设置入口。
 // @match        https://linux.do/*
 // @run-at       document-idle
@@ -29,6 +29,11 @@
     { label: '荧光粉', color: '#ff5cc9' },
     { label: '荧光绿', color: '#83ff38' },
     { label: '荧光橙', color: '#ff913b' },
+    { label: '荧光蓝', color: '#5c8dff' },
+    { label: '荧光紫', color: '#bd73ff' },
+    { label: '荧光红', color: '#ff5364' },
+    { label: '荧光薄荷绿', color: '#32ffd2' },
+    { label: '荧光金', color: '#ffd447' },
   ];
   const INITIAL_SETTINGS = {
     version: 2,

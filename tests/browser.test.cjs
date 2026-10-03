@@ -113,10 +113,15 @@ async function run(channel) {
       ['荧光粉', '#ff5cc9', 'rgb(255, 92, 201)'],
       ['荧光绿', '#83ff38', 'rgb(131, 255, 56)'],
       ['荧光橙', '#ff913b', 'rgb(255, 145, 59)'],
+      ['荧光蓝', '#5c8dff', 'rgb(92, 141, 255)'],
+      ['荧光紫', '#bd73ff', 'rgb(189, 115, 255)'],
+      ['荧光红', '#ff5364', 'rgb(255, 83, 100)'],
+      ['荧光薄荷绿', '#32ffd2', 'rgb(50, 255, 210)'],
+      ['荧光金', '#ffd447', 'rgb(255, 212, 71)'],
       ['荧光黄', '#edff00', 'rgb(237, 255, 0)'],
     ];
     const colorPanel = await openColor(firstAI);
-    assert.equal(await colorPanel.locator('.swatch').count(), 5);
+    assert.equal(await colorPanel.locator('.swatch').count(), 10);
     assert.equal(await colorPanel.getByRole('button', { name: '荧光黄', exact: true }).getAttribute('aria-pressed'), 'true');
     await colorPanel.screenshot({ path: path.join(output, `${channel}-color-picker.png`) });
     await colorPanel.getByRole('button', { name: '关闭颜色选择', exact: true }).click();
@@ -136,7 +141,7 @@ async function run(channel) {
     assert.equal(await colorPanel.isVisible(), false);
     await page.keyboard.press('Escape');
     checks.push('native invoker toggles, close buttons, popup switching, inside blank space and keyboard dismissal');
-    checks.push('five fluorescent presets save and repaint only their own group');
+    checks.push('ten fluorescent presets save and repaint only their own group');
     await ui.getByRole('button', { name: '添加分组' }).click();
     assert.equal(await cards.count(), 4);
     const added = cards.last();
