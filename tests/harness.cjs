@@ -51,7 +51,8 @@ async function installAdapter(page, seed) {
 
 async function loadFixture(page, seed = initial) {
   await installAdapter(page, seed);
-  await page.route('https://linux.do/__ldkh_fixture__', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: fixture }));
+  // SPA tests change the URL to /latest; reloads must still use the controlled fixture.
+  await page.route(/^https:\/\/linux\.do\/(?:__ldkh_fixture__|latest)$/, route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: fixture }));
   await page.goto('https://linux.do/__ldkh_fixture__');
   await page.addScriptTag({ path: scriptPath });
   await settle(page);

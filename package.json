@@ -1,6 +1,6 @@
 {
   "name": "linuxdo-keyword-highlighter",
-  "version": "1.2.2",
+  "version": "1.2.3",
   "private": true,
   "description": "Linux.do keyword highlighting userscript",
   "scripts": {

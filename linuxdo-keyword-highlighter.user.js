@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Linux.do 荧光关键词高亮
 // @namespace    linuxdo-keyword-highlighter
-// @version      1.2.2
+// @version      1.2.3
 // @description  关键词分组、分区高亮、圆角荧光背景与阴影、短词覆盖长词、可拖动或贴边的设置入口。
 // @match        https://linux.do/*
 // @run-at       document-idle
@@ -265,6 +265,7 @@
       .rules { display: flex; flex-direction: column; gap: 5px; }
       .rule { display: flex; align-items: center; gap: 7px; padding: 6px 7px; border: 1px solid light-dark(#e4e8ef, #414b5b); border-radius: 8px; }
       .rule[data-paused="true"] { opacity: .65; }
+      .group-toggle { display: grid; place-items: center; flex: 0 0 auto; padding: 3px; cursor: pointer; }
       .group-edit { flex: 1; display: flex; align-items: center; gap: 8px; min-width: 0; text-align: left; border: 0; padding: 2px 3px; background: transparent; }
       .group-label { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
       .group-count { flex: 0 0 auto; font-size: 11px; color: light-dark(#7b8797, #aebbd0); }
@@ -572,6 +573,13 @@
     let current = rule;
     const card = createElement('div', 'rule');
     card.dataset.ruleId = rule.id;
+    const toggle = createElement('label', 'group-toggle');
+    toggle.title = '勾选启用，取消勾选暂停';
+    const enabled = createElement('input');
+    enabled.type = 'checkbox';
+    enabled.checked = rule.enabled;
+    enabled.setAttribute('aria-label', '启用关键词组');
+    toggle.append(enabled);
     const edit = createElement('button', 'group-edit');
     edit.type = 'button';
     edit.setAttribute('aria-label', '编辑关键词分组');
@@ -597,7 +605,6 @@
       scopes.append(label);
       return input;
     }
-    const enabled = check('启用', rule.enabled);
     for (const region of REGIONS) checks.set(region.scope, check(region.label, rule.scopes.includes(region.scope)));
     optionPanel.append(scopes);
     attachPopover(options, optionPanel);
@@ -692,12 +699,18 @@
     name.addEventListener('input', () => change({ name: name.value }));
     customColor.addEventListener('input', () => change({ color: customColor.value }));
     function changeOptions() {
-      change({ enabled: enabled.checked, scopes: [...checks].filter(([, input]) => input.checked).map(([scope]) => scope) });
+      change({ scopes: [...checks].filter(([, input]) => input.checked).map(([scope]) => scope) });
     }
-    enabled.addEventListener('change', changeOptions);
+    enabled.addEventListener('change', () => {
+      try { change({ enabled: enabled.checked }); }
+      finally {
+        // Keep the checkbox aligned with saved state even when storage reports a failure.
+        enabled.checked = current.enabled;
+      }
+    });
     for (const input of checks.values()) input.addEventListener('change', changeOptions);
     remove.addEventListener('click', onRemove);
-    card.append(color, edit, options, remove, keywordPanel, optionPanel, colorPanel);
+    card.append(toggle, color, edit, options, remove, keywordPanel, optionPanel, colorPanel);
     refreshSummary();
     renderKeywords();
     return { card, openEditor() { showEditor(); words.querySelector('.text')?.focus(); } };
